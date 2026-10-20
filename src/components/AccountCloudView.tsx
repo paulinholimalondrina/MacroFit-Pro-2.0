@@ -441,7 +441,18 @@ export const AccountCloudView: React.FC<AccountCloudViewProps> = ({
               onClick={() => handleSaveAndTestUrl('')}
               className="px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-xs text-emerald-400 font-medium border border-slate-700/80 transition-colors cursor-pointer"
             >
-              Usar Servidor Integrado (Recomendado)
+              Usar Servidor Integrado (Padrão)
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                handleSaveAndTestUrl(
+                  'https://ais-pre-bni4jp6evocwom3vuscuhd-481614738372.us-east5.run.app'
+                )
+              }
+              className="px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-xs text-emerald-300 font-medium border border-emerald-500/30 transition-colors cursor-pointer"
+            >
+              Nuvem AI Studio (Online)
             </button>
             <button
               type="button"

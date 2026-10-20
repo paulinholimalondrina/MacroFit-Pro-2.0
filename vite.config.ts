@@ -1,5 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import fs from 'fs';
 import path from 'path';
 import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
@@ -8,6 +9,24 @@ export default defineConfig(() => {
   return {
     base: './',
     plugins: [
+      {
+        name: 'sync-docs-on-build',
+        closeBundle() {
+          try {
+            const distDir = path.resolve(process.cwd(), 'dist');
+            const docsDir = path.resolve(process.cwd(), 'docs');
+            if (fs.existsSync(distDir)) {
+              fs.cpSync(distDir, docsDir, { recursive: true });
+              const nojekyll = path.join(docsDir, '.nojekyll');
+              if (!fs.existsSync(nojekyll)) {
+                fs.writeFileSync(nojekyll, '');
+              }
+            }
+          } catch (err) {
+            console.error('Error syncing docs:', err);
+          }
+        },
+      },
       {
         name: 'suppress-vite-ws-error',
         transform(code, id) {
