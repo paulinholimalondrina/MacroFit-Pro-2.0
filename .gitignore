@@ -11,5 +11,7 @@ coverage/
 .aistudio/
 dev-dist/
 public/*.idsig
+public/assets/aistudio/
+
 
 

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -16,22 +16,38 @@ concurrency:
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Publish pre-built Web App and Android APK to gh-pages branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          WORKDIR=$(mktemp -d)
+          git clone --depth 1 --branch "${GITHUB_REF_NAME:-main}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$WORKDIR/repo"
+          cd "$WORKDIR/repo"
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./docs
+          STAGE_DIR=$(mktemp -d)
+          cp -r docs/. "$STAGE_DIR/"
+          touch "$STAGE_DIR/.nojekyll"
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          git checkout --orphan gh-pages
+          git rm -rf . > /dev/null 2>&1 || true
+          cp -r "$STAGE_DIR"/. .
+          git add -A
+          git commit -m "chore: deploy MacroFit Pro Web & Android APK to GitHub Pages"
+          git push -f origin gh-pages
+
+          # Automatically enable GitHub Pages on gh-pages branch if API allows
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" \
+            -f "source[branch]=gh-pages" \
+            -f "source[path]=/" 2>/dev/null || \
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/pages" \
+            -f "source[branch]=gh-pages" \
+            -f "source[path]=/" 2>/dev/null || true
+
+          echo "✅ Deploy concluído com sucesso na branch gh-pages e pasta /docs!"
+          echo "🌐 URL do GitHub Pages: https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"

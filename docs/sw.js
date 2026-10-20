@@ -104,9 +104,6 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "url": "assets/index-55u0-dnL.css",
     "revision": null
   }, {
-    "url": "assets/aistudio/image_ebe39f89.png",
-    "revision": null
-  }, {
     "url": "apple-touch-icon.png",
     "revision": "926f5f16a20da8aa0014ef69e1a5365d"
   }, {
@@ -123,7 +120,7 @@ define(['./workbox-afac4cd2'], (function (workbox) { 'use strict';
     "revision": "ddc07b59935eb62b6f9df9b5a6e2e35e"
   }, {
     "url": "manifest.webmanifest",
-    "revision": "8c3ad40ea4f8c73f96737680bfff15d9"
+    "revision": "9282035ec97bac466c4467e88de94299"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html")));
