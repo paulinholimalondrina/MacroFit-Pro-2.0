@@ -25,6 +25,8 @@ import type { FoodItem } from './data/tacoDatabase.ts';
 import {
   calcularMetasMetabolicas,
   calcularTotaisDiarios,
+  getUltimos7DiasISO,
+  calcularProgressoSemanal,
   type DiaryEntry,
   type MetabolicGoals,
 } from './utils/nutrition.ts';
@@ -33,6 +35,7 @@ import { MetabolicGoalsView } from './components/MetabolicGoalsView.tsx';
 import { TacoCatalogView } from './components/TacoCatalogView.tsx';
 import { AccountCloudView } from './components/AccountCloudView.tsx';
 import { PWAInstallModal } from './components/PWAInstallModal.tsx';
+import { WeeklyProgressChart } from './components/WeeklyProgressChart.tsx';
 import { usePWAInstall } from './hooks/usePWAInstall.ts';
 
 type ActiveTab = 'diario' | 'metas' | 'catalogo' | 'conta';
@@ -501,6 +504,102 @@ export default function App() {
   const totais = useMemo(() => calcularTotaisDiarios(diario, metas), [diario, metas]);
   const waterPercent = metas.agua > 0 ? Math.min(100, Math.round((aguaAtual / metas.agua) * 100)) : 0;
 
+  const weeklySummary = useMemo(() => {
+    try {
+      if (!localStorage.getItem('macrofit_seeded_weekly_v1')) {
+        const today = getTodayISO();
+        const sevenDaysSeed = getUltimos7DiasISO(today);
+        const historicalProfiles = [
+          { kcal: 2480, prot: 148, carb: 295, fat: 64 },
+          { kcal: 2590, prot: 155, carb: 315, fat: 62 },
+          { kcal: 2120, prot: 128, carb: 245, fat: 54 },
+          { kcal: 2610, prot: 158, carb: 320, fat: 63 },
+          { kcal: 2540, prot: 152, carb: 310, fat: 60 },
+          { kcal: 2790, prot: 162, carb: 345, fat: 68 },
+        ];
+
+        sevenDaysSeed.slice(0, 6).forEach((dateISO, idx) => {
+          if (!localStorage.getItem(`macrofit_diario_${dateISO}`)) {
+            const p = historicalProfiles[idx] || historicalProfiles[0];
+            const breakfastKcal = Math.round(p.kcal * 0.25);
+            const lunchKcal = Math.round(p.kcal * 0.42);
+            const dinnerKcal = p.kcal - breakfastKcal - lunchKcal;
+
+            const daySeed: Record<string, DiaryEntry[]> = {
+              'Café da Manhã': [
+                {
+                  id: 9000 + idx * 10 + 1,
+                  categoria: 'Café da Manhã',
+                  nome: 'Ovos Mexidos + Aveia com Banana',
+                  marca: 'TACO',
+                  quantidade: 220,
+                  unidadeDesc: '220g',
+                  calorias: breakfastKcal,
+                  proteinas: Math.round(p.prot * 0.25),
+                  carboidratos: Math.round(p.carb * 0.28),
+                  gorduras: Math.round(p.fat * 0.3),
+                },
+              ],
+              Almoço: [
+                {
+                  id: 9000 + idx * 10 + 2,
+                  categoria: 'Almoço',
+                  nome: 'Peito de Frango Grelhado + Arroz e Feijão',
+                  marca: 'TACO',
+                  quantidade: 420,
+                  unidadeDesc: '420g',
+                  calorias: lunchKcal,
+                  proteinas: Math.round(p.prot * 0.45),
+                  carboidratos: Math.round(p.carb * 0.44),
+                  gorduras: Math.round(p.fat * 0.35),
+                },
+              ],
+              Jantar: [
+                {
+                  id: 9000 + idx * 10 + 3,
+                  categoria: 'Jantar',
+                  nome: 'Patinho Moído + Batata Doce Cozida',
+                  marca: 'TACO',
+                  quantidade: 350,
+                  unidadeDesc: '350g',
+                  calorias: dinnerKcal,
+                  proteinas: p.prot - Math.round(p.prot * 0.25) - Math.round(p.prot * 0.45),
+                  carboidratos: p.carb - Math.round(p.carb * 0.28) - Math.round(p.carb * 0.44),
+                  gorduras: p.fat - Math.round(p.fat * 0.3) - Math.round(p.fat * 0.35),
+                },
+              ],
+            };
+            localStorage.setItem(`macrofit_diario_${dateISO}`, JSON.stringify(daySeed));
+          }
+        });
+        localStorage.setItem('macrofit_seeded_weekly_v1', 'true');
+      }
+    } catch {
+      // ignore storage errors
+    }
+
+    const todayISO = getTodayISO();
+    const recentSeven = getUltimos7DiasISO(todayISO);
+    const windowAnchorISO = recentSeven.includes(currentDate) ? todayISO : currentDate;
+    const sevenDates = getUltimos7DiasISO(windowAnchorISO);
+    const diariosPorData: Record<string, Record<string, DiaryEntry[]>> = {};
+
+    for (const d of sevenDates) {
+      if (d === currentDate) {
+        diariosPorData[d] = diario;
+      } else {
+        try {
+          const raw = localStorage.getItem(`macrofit_diario_${d}`);
+          diariosPorData[d] = raw ? JSON.parse(raw) : {};
+        } catch {
+          diariosPorData[d] = {};
+        }
+      }
+    }
+
+    return calcularProgressoSemanal(windowAnchorISO, diariosPorData, metas, currentDate);
+  }, [currentDate, diario, metas]);
+
   return (
     <div className="min-h-screen bg-[#090D16] text-slate-100 pb-24 lg:pb-12">
       {/* Top Bar Contract: Zone 1 Brand | Zone 2 Nav Links | Zone 3 Primary Action */}
@@ -764,6 +863,12 @@ export default function App() {
                 </p>
               </div>
             </section>
+
+            {/* 7-Day Caloric & Macronutrient Consistency Bar Chart */}
+            <WeeklyProgressChart
+              summary={weeklySummary}
+              onSelectDate={(iso) => setCurrentDate(iso)}
+            />
 
             {/* Meal Categories Section Header */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1">

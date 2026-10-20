@@ -9,6 +9,8 @@ import {
   calcularTotaisDiarios,
   normalizeBarcode,
   parseOpenFoodFactsProduct,
+  getUltimos7DiasISO,
+  calcularProgressoSemanal,
 } from './nutrition.ts';
 import { BASE_TACO_EXPANDIDA } from '../data/tacoDatabase.ts';
 
@@ -165,4 +167,57 @@ test('normalizeBarcode and parseOpenFoodFactsProduct parse EAN-13 products', () 
   assert.equal(parsed.gorduras, 11.5);
   assert.equal(parsed.codigoBarras, '7896311700011');
 });
+
+test('getUltimos7DiasISO and calcularProgressoSemanal compute 7-day consistency metrics', () => {
+  const days = getUltimos7DiasISO('2026-10-20');
+  assert.equal(days.length, 7);
+  assert.equal(days[0], '2026-10-14');
+  assert.equal(days[6], '2026-10-20');
+
+  const metas = { kcal: 2000, prot: 150, carb: 200, fat: 60 };
+  const diariosPorData = {
+    '2026-10-19': {
+      Almoço: [
+        {
+          id: 1,
+          categoria: 'Almoço',
+          nome: 'Refeição Completa',
+          marca: 'TACO',
+          quantidade: 500,
+          unidadeDesc: '500g',
+          calorias: 1950,
+          proteinas: 145,
+          carboidratos: 210,
+          gorduras: 58,
+        },
+      ],
+    },
+    '2026-10-20': {
+      'Café da Manhã': [
+        {
+          id: 2,
+          categoria: 'Café da Manhã',
+          nome: 'Ovos e Aveia',
+          marca: 'TACO',
+          quantidade: 200,
+          unidadeDesc: '200g',
+          calorias: 1050,
+          proteinas: 85,
+          carboidratos: 110,
+          gorduras: 30,
+        },
+      ],
+    },
+  };
+
+  const resumo = calcularProgressoSemanal('2026-10-20', diariosPorData, metas);
+  assert.equal(resumo.dias.length, 7);
+  assert.equal(resumo.diasRegistrados, 2);
+  assert.equal(resumo.diasNaMeta, 1); // 1950 is within 85%-115% of 2000
+  assert.equal(resumo.mediaCalorias, 1500); // (1950 + 1050) / 2
+  assert.equal(resumo.mediaProteinas, 115); // (145 + 85) / 2
+  assert.equal(resumo.consistenciaPercent, 29); // 2/7 = 28.57 -> 29%
+  assert.equal(resumo.dias[6].isCurrentDate, true);
+});
+
 

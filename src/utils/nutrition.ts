@@ -322,3 +322,132 @@ export function parseOpenFoodFactsProduct(
   };
 }
 
+export interface WeeklyDayPoint {
+  dateISO: string;
+  shortLabel: string;
+  weekdayShort: string;
+  dayMonth: string;
+  calorias: number;
+  proteinas: number;
+  carboidratos: number;
+  gorduras: number;
+  metaKcal: number;
+  metaProt: number;
+  metaCarb: number;
+  metaFat: number;
+  atingiuMetaKcal: boolean;
+  isCurrentDate: boolean;
+}
+
+export interface WeeklyProgressSummary {
+  dias: WeeklyDayPoint[];
+  mediaCalorias: number;
+  mediaProteinas: number;
+  mediaCarboidratos: number;
+  mediaGorduras: number;
+  diasRegistrados: number;
+  diasNaMeta: number;
+  consistenciaPercent: number;
+}
+
+const WEEKDAY_PT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+/**
+ * Return an array of 7 ISO date strings (YYYY-MM-DD) ending on referenceDateISO (inclusive),
+ * ordered chronologically from oldest (D-6) to referenceDateISO (D).
+ */
+export function getUltimos7DiasISO(referenceDateISO: string): string[] {
+  const [y, m, d] = referenceDateISO.split('-').map(Number);
+  const baseDate = new Date(y || 2026, (m || 1) - 1, d || 1);
+  const dates: string[] = [];
+
+  for (let offset = 6; offset >= 0; offset--) {
+    const dt = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() - offset);
+    const yr = dt.getFullYear();
+    const mo = String(dt.getMonth() + 1).padStart(2, '0');
+    const da = String(dt.getDate()).padStart(2, '0');
+    dates.push(`${yr}-${mo}-${da}`);
+  }
+
+  return dates;
+}
+
+/**
+ * Compute 7-day caloric and macronutrient progress and diet consistency metrics.
+ */
+export function calcularProgressoSemanal(
+  referenceDateISO: string,
+  diariosPorData: Record<string, Record<string, DiaryEntry[]>>,
+  metas: Pick<MetabolicGoals, 'kcal' | 'prot' | 'carb' | 'fat'>,
+  selectedDateISO: string = referenceDateISO
+): WeeklyProgressSummary {
+  const dates = getUltimos7DiasISO(referenceDateISO);
+
+  const dias: WeeklyDayPoint[] = dates.map((dateISO) => {
+    const [y, m, d] = dateISO.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    const weekdayShort = WEEKDAY_PT[dt.getDay()] || '';
+    const dayMonth = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
+    const diarioDia = diariosPorData[dateISO] || {};
+    const totais = calcularTotaisDiarios(diarioDia, metas);
+
+    const lowerBound = metas.kcal * 0.85;
+    const upperBound = metas.kcal * 1.15;
+    const atingiuMetaKcal =
+      totais.calorias > 0 && totais.calorias >= lowerBound && totais.calorias <= upperBound;
+
+    return {
+      dateISO,
+      shortLabel: `${weekdayShort} ${String(d).padStart(2, '0')}`,
+      weekdayShort,
+      dayMonth,
+      calorias: totais.calorias,
+      proteinas: totais.proteinas,
+      carboidratos: totais.carboidratos,
+      gorduras: totais.gorduras,
+      metaKcal: metas.kcal,
+      metaProt: metas.prot,
+      metaCarb: metas.carb,
+      metaFat: metas.fat,
+      atingiuMetaKcal,
+      isCurrentDate: dateISO === selectedDateISO,
+    };
+  });
+
+  const diasComRegistro = dias.filter((d) => d.calorias > 0);
+  const diasRegistrados = diasComRegistro.length;
+  const diasNaMeta = dias.filter((d) => d.atingiuMetaKcal).length;
+  const divisor = diasRegistrados > 0 ? diasRegistrados : 1;
+
+  const mediaCalorias =
+    diasRegistrados > 0
+      ? Math.round(diasComRegistro.reduce((acc, d) => acc + d.calorias, 0) / divisor)
+      : 0;
+  const mediaProteinas =
+    diasRegistrados > 0
+      ? Number((diasComRegistro.reduce((acc, d) => acc + d.proteinas, 0) / divisor).toFixed(1))
+      : 0;
+  const mediaCarboidratos =
+    diasRegistrados > 0
+      ? Number((diasComRegistro.reduce((acc, d) => acc + d.carboidratos, 0) / divisor).toFixed(1))
+      : 0;
+  const mediaGorduras =
+    diasRegistrados > 0
+      ? Number((diasComRegistro.reduce((acc, d) => acc + d.gorduras, 0) / divisor).toFixed(1))
+      : 0;
+
+  const consistenciaPercent = Math.round((diasRegistrados / 7) * 100);
+
+  return {
+    dias,
+    mediaCalorias,
+    mediaProteinas,
+    mediaCarboidratos,
+    mediaGorduras,
+    diasRegistrados,
+    diasNaMeta,
+    consistenciaPercent,
+  };
+}
+
+
