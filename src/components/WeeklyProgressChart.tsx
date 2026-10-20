@@ -188,8 +188,9 @@ export const WeeklyProgressChart: React.FC<WeeklyProgressChartProps> = ({
               data={dias}
               margin={{ top: 12, right: 12, left: -16, bottom: 4 }}
               onClick={(state) => {
-                if (state && state.activePayload && state.activePayload[0]?.payload?.dateISO) {
-                  onSelectDate(state.activePayload[0].payload.dateISO);
+                const payload = (state as { activePayload?: Array<{ payload?: { dateISO?: string } }> })?.activePayload;
+                if (payload && payload[0]?.payload?.dateISO) {
+                  onSelectDate(payload[0].payload.dateISO);
                 }
               }}
             >
@@ -254,8 +255,9 @@ export const WeeklyProgressChart: React.FC<WeeklyProgressChartProps> = ({
               data={dias}
               margin={{ top: 12, right: 12, left: -16, bottom: 4 }}
               onClick={(state) => {
-                if (state && state.activePayload && state.activePayload[0]?.payload?.dateISO) {
-                  onSelectDate(state.activePayload[0].payload.dateISO);
+                const payload = (state as { activePayload?: Array<{ payload?: { dateISO?: string } }> })?.activePayload;
+                if (payload && payload[0]?.payload?.dateISO) {
+                  onSelectDate(payload[0].payload.dateISO);
                 }
               }}
             >

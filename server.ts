@@ -624,7 +624,7 @@ async function startServer() {
       carb: Number(m.carb) || 250,
       fat: Number(m.fat) || 60,
       agua: Number(m.agua) || 2500,
-      genero: m.genero === 'f' ? 'f' : 'm',
+      genero: (m.genero === 'f' ? 'f' : 'm') as 'm' | 'f',
       idade: Number(m.idade) || 30,
       peso: Number(m.peso) || 75,
       altura: Number(m.altura) || 175,
@@ -998,7 +998,7 @@ async function startServer() {
 
     // 3. Fallback: Query FatSecret Barcode API if token available
     try {
-      const fsToken = await getFatSecretAccessToken();
+      const fsToken = await obterTokenFatSecret();
       if (fsToken) {
         const gtin13 = cleanCode.padStart(13, '0');
         const params = new URLSearchParams({
