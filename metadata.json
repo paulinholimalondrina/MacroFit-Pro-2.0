@@ -1,0 +1,6 @@
+{
+  "name": "MacroFit Pro",
+  "description": "Aplicativo Android e Web para controle de macronutrientes, cálculo metabólico TMB/GET, hidratação e base TACO + FatSecret sincronizada na nuvem.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
