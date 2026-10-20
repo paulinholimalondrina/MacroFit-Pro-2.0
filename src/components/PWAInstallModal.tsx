@@ -20,7 +20,7 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({ isOpen, onClos
     if (isDownloadingApk) return;
     setIsDownloadingApk(true);
     try {
-      const response = await fetch('/MacroFit-Pro.apk');
+      const response = await fetch('./MacroFit-Pro.apk');
       if (!response.ok) throw new Error('Falha no download');
       const blob = await response.blob();
       const apkBlob = new Blob([blob], { type: 'application/vnd.android.package-archive' });
@@ -36,7 +36,7 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({ isOpen, onClos
     } catch {
       // Fallback to direct link
       const link = document.createElement('a');
-      link.href = '/MacroFit-Pro.apk';
+      link.href = './MacroFit-Pro.apk';
       link.download = 'MacroFit-Pro.apk';
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
@@ -94,7 +94,7 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({ isOpen, onClos
             Baixe o arquivo <strong className="text-white">.apk</strong> nativo com a base TACO embutida e sincronização com a nuvem pronta para o seu celular Android:
           </p>
           <a
-            href="/MacroFit-Pro.apk"
+            href="./MacroFit-Pro.apk"
             download="MacroFit-Pro.apk"
             onClick={handleDownloadApk}
             className="w-full min-h-[48px] rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer"

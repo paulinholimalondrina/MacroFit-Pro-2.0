@@ -123,7 +123,10 @@ export default function App() {
   const [apiBaseUrl, setApiBaseUrl] = useState<string>(() => {
     const saved = localStorage.getItem('macrofit_backend_url');
     if (saved !== null) return saved;
-    if (typeof window !== 'undefined' && window.location.protocol === 'file:') {
+    if (
+      typeof window !== 'undefined' &&
+      (window.location.protocol === 'file:' || window.location.hostname.endsWith('github.io'))
+    ) {
       return 'https://ais-pre-bni4jp6evocwom3vuscuhd-481614738372.us-east5.run.app';
     }
     return '';
