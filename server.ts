@@ -4,10 +4,12 @@ import path from 'node:path';
 import express from 'express';
 import pg from 'pg';
 import { createServer as createViteServer } from 'vite';
-import { BASE_TACO_EXPANDIDA, type FoodItem } from './src/data/tacoDatabase.ts';
+import { BARCODE_CATALOG_BR, BASE_TACO_EXPANDIDA, type FoodItem } from './src/data/tacoDatabase.ts';
 import {
   filterFoodsByQuery,
+  normalizeBarcode,
   parseFatSecretDescription,
+  parseOpenFoodFactsProduct,
   removerAcentos,
   type DiaryEntry,
   type MetabolicGoals,
@@ -941,6 +943,144 @@ async function startServer() {
     });
   });
 
+  // Barcode Product Lookup: Local Cache -> BARCODE_CATALOG_BR -> OpenFoodFacts v2 -> FatSecret Barcode API
+  app.get('/api/alimentos/barcode/:code', async (req, res) => {
+    const cleanCode = normalizeBarcode(req.params.code || '');
+    if (cleanCode.length < 8) {
+      res.status(400).json({ detail: 'Código de barras inválido (mínimo 8 dígitos).' });
+      return;
+    }
+
+    // 1. Check custom foods and local catalog
+    const customMatch = localStore.customFoods.find(
+      (f) => f.codigoBarras && normalizeBarcode(f.codigoBarras) === cleanCode
+    );
+    if (customMatch) {
+      res.json({ status: 'ok', origem: 'cache_local', item: customMatch });
+      return;
+    }
+
+    if (BARCODE_CATALOG_BR[cleanCode]) {
+      res.json({
+        status: 'ok',
+        origem: 'catalogo_br',
+        item: BARCODE_CATALOG_BR[cleanCode],
+      });
+      return;
+    }
+
+    // 2. Query OpenFoodFacts API v2 (Brazilian & Global EAN-13 database)
+    const offUrls = [
+      `https://br.openfoodfacts.org/api/v2/product/${encodeURIComponent(cleanCode)}.json`,
+      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(cleanCode)}.json`,
+    ];
+
+    for (const url of offUrls) {
+      try {
+        const resp = await fetch(url, {
+          headers: { 'User-Agent': 'MacroFitPro/1.0 (https://macrofit.local)' },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          const parsedItem = parseOpenFoodFactsProduct(data, cleanCode);
+          if (parsedItem) {
+            localStore.customFoods.unshift(parsedItem);
+            saveLocalStore(localStore);
+            res.json({ status: 'ok', origem: 'openfoodfacts_barcode', item: parsedItem });
+            return;
+          }
+        }
+      } catch {
+        // try next endpoint
+      }
+    }
+
+    // 3. Fallback: Query FatSecret Barcode API if token available
+    try {
+      const fsToken = await getFatSecretAccessToken();
+      if (fsToken) {
+        const gtin13 = cleanCode.padStart(13, '0');
+        const params = new URLSearchParams({
+          method: 'food.find_id_for_barcode',
+          barcode: gtin13,
+          format: 'json',
+        });
+        const fsResp = await fetch(
+          `https://platform.fatsecret.com/rest/server.api?${params.toString()}`,
+          {
+            headers: { Authorization: `Bearer ${fsToken}` },
+            signal: AbortSignal.timeout(4500),
+          }
+        );
+        if (fsResp.ok) {
+          const fsData = (await fsResp.json()) as { food_id?: { value?: string } };
+          const foodId = fsData?.food_id?.value;
+          if (foodId && foodId !== '0') {
+            const detailParams = new URLSearchParams({
+              method: 'food.get.v4',
+              food_id: String(foodId),
+              format: 'json',
+            });
+            const detailResp = await fetch(
+              `https://platform.fatsecret.com/rest/server.api?${detailParams.toString()}`,
+              {
+                headers: { Authorization: `Bearer ${fsToken}` },
+                signal: AbortSignal.timeout(4500),
+              }
+            );
+            if (detailResp.ok) {
+              const detailJson = (await detailResp.json()) as {
+                food?: {
+                  food_name?: string;
+                  brand_name?: string;
+                  servings?: {
+                    serving?:
+                      | Array<Record<string, string>>
+                      | Record<string, string>;
+                  };
+                };
+              };
+              const f = detailJson.food;
+              if (f?.food_name) {
+                const rawServings = f.servings?.serving;
+                const servingList = Array.isArray(rawServings)
+                  ? rawServings
+                  : rawServings
+                    ? [rawServings]
+                    : [];
+                const s = servingList[0] || {};
+                const metricAmt = Number(s.metric_serving_amount) || 100;
+                const scale = metricAmt > 0 ? 100 / metricAmt : 1;
+                const fsItem: FoodItem = {
+                  nome: f.food_name,
+                  marca: f.brand_name || 'FatSecret',
+                  calorias: Math.round((Number(s.calories) || 0) * scale * 10) / 10,
+                  proteinas: Math.round((Number(s.protein) || 0) * scale * 10) / 10,
+                  carboidratos: Math.round((Number(s.carbohydrate) || 0) * scale * 10) / 10,
+                  gorduras: Math.round((Number(s.fat) || 0) * scale * 10) / 10,
+                  fonte: 'BARCODE',
+                  codigoBarras: cleanCode,
+                };
+                localStore.customFoods.unshift(fsItem);
+                saveLocalStore(localStore);
+                res.json({ status: 'ok', origem: 'fatsecret_barcode', item: fsItem });
+                return;
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore FatSecret errors
+    }
+
+    res.status(404).json({
+      detail: `Produto com código ${cleanCode} não encontrado nas bases automáticas. Você pode cadastrá-lo manualmente agora!`,
+      codigoBarras: cleanCode,
+    });
+  });
+
   // Direct Android APK Download Route
   app.get('/MacroFit-Pro.apk', (_req, res) => {
     const apkPublicPath = path.join(process.cwd(), 'public', 'MacroFit-Pro.apk');
@@ -1145,8 +1285,8 @@ async function startServer() {
         'src/utils/nutrition.test.ts',
         'src/hooks/usePWAInstall.ts',
         'src/components/PWAInstallModal.tsx',
+        'src/components/BarcodeScannerView.tsx',
         'src/components/FoodSearchModal.tsx',
-        'src/components/MetabolicGoalsView.ts',
         'src/components/MetabolicGoalsView.tsx',
         'src/components/TacoCatalogView.tsx',
         'src/components/AccountCloudView.tsx',

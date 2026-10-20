@@ -7,6 +7,8 @@ import {
   calcularPorcaoAlimento,
   parseFatSecretDescription,
   calcularTotaisDiarios,
+  normalizeBarcode,
+  parseOpenFoodFactsProduct,
 } from './nutrition.ts';
 import { BASE_TACO_EXPANDIDA } from '../data/tacoDatabase.ts';
 
@@ -135,3 +137,32 @@ test('calcularTotaisDiarios aggregates daily entries and computes remaining calo
   assert.equal(totais.saldoKcal, 1536);
   assert.equal(totais.percentKcal, 23);
 });
+
+test('normalizeBarcode and parseOpenFoodFactsProduct parse EAN-13 products', () => {
+  assert.equal(normalizeBarcode(' 789-1000-100103 '), '7891000100103');
+  const parsed = parseOpenFoodFactsProduct(
+    {
+      status: 1,
+      product: {
+        product_name_pt: 'Barra de Proteína Crisp',
+        brands: 'Integralmédica, Nutri',
+        nutriments: {
+          'energy-kcal_100g': 385.4,
+          proteins_100g: 32.1,
+          carbohydrates_100g: 38.0,
+          fat_100g: 11.5,
+        },
+      },
+    },
+    '7896311700011'
+  );
+  assert.ok(parsed);
+  assert.equal(parsed.nome, 'Barra de Proteína Crisp');
+  assert.equal(parsed.marca, 'Integralmédica');
+  assert.equal(parsed.calorias, 385.4);
+  assert.equal(parsed.proteinas, 32.1);
+  assert.equal(parsed.carboidratos, 38);
+  assert.equal(parsed.gorduras, 11.5);
+  assert.equal(parsed.codigoBarras, '7896311700011');
+});
+

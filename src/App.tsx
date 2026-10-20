@@ -18,6 +18,7 @@ import {
   UserCheck,
   Smartphone,
   FolderPlus,
+  ScanBarcode,
   X,
 } from 'lucide-react';
 import type { FoodItem } from './data/tacoDatabase.ts';
@@ -143,6 +144,7 @@ export default function App() {
 
   // Modals
   const [foodModalCategory, setFoodModalCategory] = useState<string | null>(null);
+  const [openInBarcodeMode, setOpenInBarcodeMode] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
@@ -764,25 +766,38 @@ export default function App() {
             </section>
 
             {/* Meal Categories Section Header */}
-            <div className="flex items-center justify-between gap-4 pt-1">
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
               <div>
                 <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
                   <Utensils className="w-4 h-4 text-emerald-400" />
                   Refeições do Dia
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Toque em "+ Adicionar Alimento" em qualquer refeição ou crie categorias personalizadas
+                  Adicione alimentos pela busca híbrida, leia o código de barras com a câmera ou crie categorias
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setIsCategoryModalOpen(true)}
-                className="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/90 text-xs font-semibold text-emerald-400 transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap"
-              >
-                <FolderPlus className="w-4 h-4" />
-                Nova Categoria
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpenInBarcodeMode(true);
+                    setFoodModalCategory(categories[0] || 'Café da Manhã');
+                  }}
+                  className="min-h-[44px] px-3.5 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-xs font-bold text-emerald-300 transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap"
+                >
+                  <ScanBarcode className="w-4 h-4 text-emerald-400" />
+                  Ler Código de Barras
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCategoryModalOpen(true)}
+                  className="min-h-[44px] px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/90 text-xs font-semibold text-slate-200 transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap"
+                >
+                  <FolderPlus className="w-4 h-4 text-emerald-400" />
+                  Nova Categoria
+                </button>
+              </div>
             </div>
 
             {/* Meal Categories Grid (2 columns on desktop, 1 on mobile) */}
@@ -829,14 +844,32 @@ export default function App() {
                           </p>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => setFoodModalCategory(categoria)}
-                          className="min-h-[42px] px-3.5 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/30 text-xs font-bold transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap"
-                        >
-                          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                          Adicionar Alimento
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOpenInBarcodeMode(true);
+                              setFoodModalCategory(categoria);
+                            }}
+                            aria-label={`Ler código de barras para ${categoria}`}
+                            title="Ler Código de Barras (Câmera)"
+                            className="min-h-[42px] px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-emerald-400 border border-slate-700/90 text-xs font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <ScanBarcode className="w-4 h-4" />
+                            <span className="hidden sm:inline">Código</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOpenInBarcodeMode(false);
+                              setFoodModalCategory(categoria);
+                            }}
+                            className="min-h-[42px] px-3.5 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/30 text-xs font-bold transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer whitespace-nowrap"
+                          >
+                            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                            Adicionar
+                          </button>
+                        </div>
                       </div>
 
                       {/* Logged Food Rows */}
@@ -991,7 +1024,11 @@ export default function App() {
         targetCategory={foodModalCategory || 'Café da Manhã'}
         customFoods={customFoods}
         apiBaseUrl={apiBaseUrl.replace(/\/+$/, '')}
-        onClose={() => setFoodModalCategory(null)}
+        initialBarcodeMode={openInBarcodeMode}
+        onClose={() => {
+          setFoodModalCategory(null);
+          setOpenInBarcodeMode(false);
+        }}
         onAddDiaryEntry={handleAddDiaryEntry}
         onSaveCustomFood={handleSaveCustomFood}
       />

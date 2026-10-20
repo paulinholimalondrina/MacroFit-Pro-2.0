@@ -1,20 +1,24 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Search, Plus, X, Check, Loader2, PenSquare, Utensils } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Search, Plus, X, Check, Loader2, PenSquare, Utensils, ScanBarcode } from 'lucide-react';
 import type { FoodItem } from '../data/tacoDatabase.ts';
-import { BASE_TACO_EXPANDIDA } from '../data/tacoDatabase.ts';
+import { BARCODE_CATALOG_BR, BASE_TACO_EXPANDIDA } from '../data/tacoDatabase.ts';
 import {
   PORTION_UNITS,
   calcularPorcaoAlimento,
   filterFoodsByQuery,
+  normalizeBarcode,
+  parseOpenFoodFactsProduct,
   removerAcentos,
   type DiaryEntry,
 } from '../utils/nutrition.ts';
+import { BarcodeScannerView } from './BarcodeScannerView.tsx';
 
 interface FoodSearchModalProps {
   isOpen: boolean;
   targetCategory: string;
   customFoods: FoodItem[];
   apiBaseUrl: string;
+  initialBarcodeMode?: boolean;
   onClose: () => void;
   onAddDiaryEntry: (entry: Omit<DiaryEntry, 'id'>) => void;
   onSaveCustomFood: (food: FoodItem) => Promise<void>;
@@ -25,6 +29,7 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
   targetCategory,
   customFoods,
   apiBaseUrl,
+  initialBarcodeMode = false,
   onClose,
   onAddDiaryEntry,
   onSaveCustomFood,
@@ -36,12 +41,18 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
 
   const [selectedFood, setSelectedFood] = useState<FoodItem | null>(null);
   const [quantity, setQuantity] = useState<string>('100');
-  const [selectedUnitIdx, setSelectedUnitIdx] = useState<number>(0); // default: Gramas (1g)
+  const [selectedUnitIdx, setSelectedUnitIdx] = useState<number>(0);
+
+  // Barcode scanner sub-mode
+  const [isBarcodeMode, setIsBarcodeMode] = useState(false);
+  const [isLookingUpBarcode, setIsLookingUpBarcode] = useState(false);
+  const [barcodeError, setBarcodeError] = useState('');
 
   // Manual food creation sub-mode
   const [isManualMode, setIsManualMode] = useState(false);
   const [manNome, setManNome] = useState('');
   const [manMarca, setManMarca] = useState('');
+  const [manCodigoBarras, setManCodigoBarras] = useState('');
   const [manKcal, setManKcal] = useState('');
   const [manProt, setManProt] = useState('');
   const [manCarb, setManCarb] = useState('');
@@ -57,22 +68,33 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
       setQuantity('100');
       setSelectedUnitIdx(0);
       setIsManualMode(false);
+      setIsBarcodeMode(Boolean(initialBarcodeMode));
+      setIsLookingUpBarcode(false);
+      setBarcodeError('');
+      setManCodigoBarras('');
       setManError('');
-      // Show top popular foods initially so the user can tap right away
       const initialList = [...customFoods, ...BASE_TACO_EXPANDIDA.slice(0, 14)];
       setResults(initialList);
       setSearchOrigin('Sugestões TACO & Favoritos');
-      setTimeout(() => inputRef.current?.focus(), 80);
+      if (!initialBarcodeMode) {
+        setTimeout(() => inputRef.current?.focus(), 80);
+      }
     }
-  }, [isOpen, customFoods]);
+  }, [isOpen, customFoods, initialBarcodeMode]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || isBarcodeMode) return;
     const trimmed = query.trim();
     if (trimmed.length < 2) {
-      const initialList = [...customFoods, ...BASE_TACO_EXPANDIDA.slice(0, 14)];
-      setResults(initialList);
-      setSearchOrigin('Sugestões TACO & Favoritos');
+      const baseList = [...customFoods, ...BASE_TACO_EXPANDIDA.slice(0, 14)];
+      if (selectedFood && !baseList.some((i) => i.nome === selectedFood.nome && i.marca === selectedFood.marca)) {
+        setResults([selectedFood, ...baseList]);
+      } else {
+        setResults(baseList);
+      }
+      if (!selectedFood?.codigoBarras) {
+        setSearchOrigin('Sugestões TACO & Favoritos');
+      }
       setIsSearching(false);
       return;
     }
@@ -87,12 +109,12 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
     setIsSearching(true);
     const timer = setTimeout(async () => {
       try {
-        const endpoint = `${apiBaseUrl}/api/alimentos?q=${encodeURIComponent(trimmed)}`;
+        const base = apiBaseUrl.replace(/\/+$/, '');
+        const endpoint = `${base}/api/alimentos?q=${encodeURIComponent(trimmed)}`;
         const resp = await fetch(endpoint);
         if (resp.ok) {
           const data = (await resp.json()) as { origem?: string; itens?: FoodItem[] };
           if (Array.isArray(data.itens) && data.itens.length > 0) {
-            // Merge local custom foods + backend items without duplicates
             const seen = new Set<string>();
             const merged: FoodItem[] = [];
             for (const item of [...localMatches, ...data.itens]) {
@@ -120,7 +142,103 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [query, isOpen, customFoods, apiBaseUrl]);
+  }, [query, isOpen, isBarcodeMode, customFoods, apiBaseUrl]);
+
+  const handleBarcodeDetected = useCallback(
+    async (rawCode: string) => {
+      const cleanCode = normalizeBarcode(rawCode);
+      if (cleanCode.length < 8) {
+        setBarcodeError('Código de barras inválido (mínimo 8 dígitos).');
+        return;
+      }
+
+      setBarcodeError('');
+      setIsLookingUpBarcode(true);
+
+      const applyDiscoveredFood = (food: FoodItem, originLabel: string) => {
+        setIsBarcodeMode(false);
+        setIsLookingUpBarcode(false);
+        setSelectedFood(food);
+        setQuantity('100');
+        setSelectedUnitIdx(0);
+        setResults((prev) => [
+          food,
+          ...prev.filter((p) => p.nome !== food.nome || p.marca !== food.marca),
+        ]);
+        setSearchOrigin(originLabel);
+      };
+
+      try {
+        // 1. Check custom foods saved locally
+        const localCustom = customFoods.find(
+          (f) => f.codigoBarras && normalizeBarcode(f.codigoBarras) === cleanCode
+        );
+        if (localCustom) {
+          applyDiscoveredFood(localCustom, `Código ${cleanCode} (Seus Favoritos)`);
+          return;
+        }
+
+        // 2. Check built-in Brazilian EAN-13 Catalog (0ms)
+        if (BARCODE_CATALOG_BR[cleanCode]) {
+          applyDiscoveredFood(BARCODE_CATALOG_BR[cleanCode], `Código ${cleanCode} (Catálogo BR)`);
+          return;
+        }
+
+        // 3. Query Backend Barcode Endpoint (/api/alimentos/barcode/:code)
+        const base = apiBaseUrl.replace(/\/+$/, '');
+        try {
+          const apiResp = await fetch(
+            `${base}/api/alimentos/barcode/${encodeURIComponent(cleanCode)}`
+          );
+          if (apiResp.ok) {
+            const data = (await apiResp.json()) as { item?: FoodItem; origem?: string };
+            if (data.item) {
+              applyDiscoveredFood(data.item, `Código ${cleanCode} (API Híbrida)`);
+              return;
+            }
+          }
+        } catch {
+          // Fallback to direct client-side OpenFoodFacts lookup below
+        }
+
+        // 4. Direct browser fallback to OpenFoodFacts API v2 (works offline from backend / on GitHub Pages)
+        const offUrls = [
+          `https://br.openfoodfacts.org/api/v2/product/${encodeURIComponent(cleanCode)}.json`,
+          `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(cleanCode)}.json`,
+        ];
+        for (const url of offUrls) {
+          try {
+            const offResp = await fetch(url);
+            if (offResp.ok) {
+              const offData = await offResp.json();
+              const parsed = parseOpenFoodFactsProduct(offData, cleanCode);
+              if (parsed) {
+                await onSaveCustomFood(parsed);
+                applyDiscoveredFood(parsed, `Código ${cleanCode} (OpenFoodFacts)`);
+                return;
+              }
+            }
+          } catch {
+            // continue
+          }
+        }
+
+        // 5. If barcode is brand new, open manual registration pre-filled with the barcode!
+        setIsBarcodeMode(false);
+        setIsLookingUpBarcode(false);
+        setManCodigoBarras(cleanCode);
+        setManNome('');
+        setManMarca('');
+        setManError(
+          `Código ${cleanCode} lido com sucesso! Como este produto ainda não consta na base pública, informe os dados do rótulo abaixo para salvá-lo.`
+        );
+        setIsManualMode(true);
+      } finally {
+        setIsLookingUpBarcode(false);
+      }
+    },
+    [apiBaseUrl, customFoods, onSaveCustomFood]
+  );
 
   if (!isOpen) return null;
 
@@ -133,7 +251,6 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
 
   const handleSelectFood = (food: FoodItem) => {
     setSelectedFood(food);
-    // Smart default quantity: 100 for grams/ml, 1 for units/spoons/scoops
     if (currentUnit.gramsPerUnit === 1) {
       setQuantity('100');
     } else {
@@ -185,6 +302,7 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
       return;
     }
 
+    const cleanBarcode = normalizeBarcode(manCodigoBarras);
     const novo: FoodItem = {
       nome,
       marca: manMarca.trim() || 'Manual',
@@ -192,7 +310,8 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
       proteinas: Math.max(0, parseFloat(manProt) || 0),
       carboidratos: Math.max(0, parseFloat(manCarb) || 0),
       gorduras: Math.max(0, parseFloat(manFat) || 0),
-      fonte: 'MANUAL',
+      fonte: cleanBarcode ? 'BARCODE' : 'MANUAL',
+      ...(cleanBarcode ? { codigoBarras: cleanBarcode } : {}),
     };
 
     await onSaveCustomFood(novo);
@@ -202,6 +321,7 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
     setSelectedUnitIdx(0);
     setManNome('');
     setManMarca('');
+    setManCodigoBarras('');
     setManKcal('');
     setManProt('');
     setManCarb('');
@@ -224,7 +344,11 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
           <div>
             <h3 id="food-modal-title" className="text-base font-bold text-white flex items-center gap-2">
               <Utensils className="w-4 h-4 text-emerald-400" />
-              {isManualMode ? 'Cadastrar Alimento Manual' : 'Buscar & Adicionar Alimento'}
+              {isBarcodeMode
+                ? 'Leitor de Código de Barras'
+                : isManualMode
+                  ? 'Cadastrar Alimento Manual'
+                  : 'Buscar & Adicionar Alimento'}
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
               Refeição destino: <strong className="text-emerald-400">{targetCategory}</strong>
@@ -240,33 +364,59 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
           </button>
         </div>
 
-        {isManualMode ? (
+        {isBarcodeMode ? (
+          <div className="overflow-y-auto pr-1">
+            <BarcodeScannerView
+              onDetected={handleBarcodeDetected}
+              onCancel={() => setIsBarcodeMode(false)}
+              isLookingUp={isLookingUpBarcode}
+              errorMsg={barcodeError}
+            />
+          </div>
+        ) : isManualMode ? (
           <form onSubmit={handleCreateManualFood} className="space-y-3 overflow-y-auto pr-1">
-            <div>
-              <label htmlFor="man-nome" className="block text-xs font-medium text-slate-300 mb-1">
-                Nome do Alimento *
-              </label>
-              <input
-                id="man-nome"
-                type="text"
-                value={manNome}
-                onChange={(e) => setManNome(e.target.value)}
-                placeholder="Ex: Pão de Queijo Caseiro, Barra de Proteína..."
-                className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white outline-none focus:border-emerald-500"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="man-nome" className="block text-xs font-medium text-slate-300 mb-1">
+                  Nome do Alimento *
+                </label>
+                <input
+                  id="man-nome"
+                  type="text"
+                  value={manNome}
+                  onChange={(e) => setManNome(e.target.value)}
+                  placeholder="Ex: Barra de Proteína..."
+                  className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="man-marca" className="block text-xs font-medium text-slate-300 mb-1">
+                  Marca / Fabricante
+                </label>
+                <input
+                  id="man-marca"
+                  type="text"
+                  value={manMarca}
+                  onChange={(e) => setManMarca(e.target.value)}
+                  placeholder="Ex: Integralmédica, Nestlé..."
+                  className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white outline-none focus:border-emerald-500"
+                />
+              </div>
             </div>
 
             <div>
-              <label htmlFor="man-marca" className="block text-xs font-medium text-slate-300 mb-1">
-                Marca / Fabricante (Opcional)
+              <label htmlFor="man-barcode" className="block text-xs font-medium text-slate-300 mb-1">
+                Código de Barras EAN-13 (Opcional)
               </label>
               <input
-                id="man-marca"
+                id="man-barcode"
                 type="text"
-                value={manMarca}
-                onChange={(e) => setManMarca(e.target.value)}
-                placeholder="Ex: Caseiro, IntegralMédica, Sadia..."
-                className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white outline-none focus:border-emerald-500"
+                inputMode="numeric"
+                value={manCodigoBarras}
+                onChange={(e) => setManCodigoBarras(e.target.value)}
+                placeholder="Ex: 7891000100103"
+                className="w-full min-h-[42px] bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-emerald-400 font-mono outline-none focus:border-emerald-500"
               />
             </div>
 
@@ -333,7 +483,7 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
               </div>
             </div>
 
-            {manError && <p className="text-xs text-rose-400 font-medium">{manError}</p>}
+            {manError && <p className="text-xs text-emerald-300 font-medium">{manError}</p>}
 
             <div className="pt-3 border-t border-slate-800 flex gap-2">
               <button
@@ -353,31 +503,47 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
           </form>
         ) : (
           <>
-            {/* Search Input */}
-            <div className="relative mb-2 shrink-0">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                ref={inputRef}
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                aria-label="Pesquisar alimento ou marca"
-                placeholder="Ex: Nescau, Frango, Arroz, Whey Growth, Vigor..."
-                className="w-full min-h-[46px] bg-slate-950 border border-slate-700/90 rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder:text-slate-500 outline-none focus:border-emerald-500 transition-colors"
-              />
-              {isSearching && (
-                <Loader2 className="w-4 h-4 text-emerald-400 animate-spin absolute right-3.5 top-1/2 -translate-y-1/2" />
-              )}
+            {/* Search Input & Camera Barcode Trigger */}
+            <div className="flex gap-2 mb-2 shrink-0">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  aria-label="Pesquisar alimento ou marca"
+                  placeholder="Ex: Nescau, Frango, Arroz, Whey..."
+                  className="w-full min-h-[46px] bg-slate-950 border border-slate-700/90 rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder:text-slate-500 outline-none focus:border-emerald-500 transition-colors"
+                />
+                {isSearching && (
+                  <Loader2 className="w-4 h-4 text-emerald-400 animate-spin absolute right-3.5 top-1/2 -translate-y-1/2" />
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsBarcodeMode(true)}
+                aria-label="Ler código de barras com a câmera"
+                className="min-h-[46px] px-3.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 font-bold text-xs flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer whitespace-nowrap"
+              >
+                <ScanBarcode className="w-4 h-4 text-emerald-400" />
+                <span>Ler Código</span>
+              </button>
             </div>
 
             {/* Search Metadata */}
             <div className="flex items-center justify-between text-xs text-slate-400 px-1 mb-2 shrink-0">
-              <span>{ query.trim().length < 2 ? 'Toque em um alimento ou digite para filtrar' : `Resultados para "${query}"` }</span>
+              <span>
+                {query.trim().length < 2
+                  ? 'Toque em um alimento ou leia o código de barras'
+                  : `Resultados para "${query}"`}
+              </span>
               <span className="font-mono text-[11px] text-slate-400">{searchOrigin}</span>
             </div>
 
             {/* Results List */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 min-h-[150px] max-h-[220px] border border-slate-800/90 rounded-xl p-2 bg-slate-950/50 mb-3">
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-1.5 min-h-[140px] max-h-[210px] border border-slate-800/90 rounded-xl p-2 bg-slate-950/50 mb-3">
               {results.length === 0 ? (
                 <div className="py-8 text-center text-xs text-slate-400 space-y-2">
                   <p>Nenhum alimento encontrado para "{query}".</p>
@@ -411,6 +577,7 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
                         <p className="text-xs font-semibold text-white truncate">{item.nome}</p>
                         <p className="text-[11px] text-slate-400 truncate">
                           {item.marca} · 100g
+                          {item.codigoBarras ? ` · EAN ${item.codigoBarras}` : ''}
                         </p>
                       </div>
                       <div className="text-right shrink-0 font-mono">
@@ -448,7 +615,14 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-white truncate">{selectedFood.nome}</p>
                       <p className="text-xs text-slate-400 truncate">
-                        {selectedFood.marca} · {selectedFood.fonte === 'FATSECRET' ? 'FatSecret' : selectedFood.fonte === 'MANUAL' ? 'Cadastro Manual' : 'Tabela TACO'}
+                        {selectedFood.marca} ·{' '}
+                        {selectedFood.codigoBarras
+                          ? `Código ${selectedFood.codigoBarras}`
+                          : selectedFood.fonte === 'FATSECRET'
+                            ? 'FatSecret'
+                            : selectedFood.fonte === 'MANUAL'
+                              ? 'Cadastro Manual'
+                              : 'Tabela TACO'}
                       </p>
                     </div>
                     <span className="text-xs font-mono text-slate-400 shrink-0">
@@ -479,7 +653,7 @@ export const FoodSearchModal: React.FC<FoodSearchModalProps> = ({
                         id="portion-unit"
                         value={selectedUnitIdx}
                         onChange={(e) => handleUnitChange(Number(e.target.value))}
-                        className="w-full min-h-[42px] bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white font-medium outline-none focus:border-emerald-500"
+                        className="w-full min-h-[42px] bg-slate-950 border border-slate-700 rounded-lg pl-2.5 pr-7 py-1.5 text-xs text-white font-medium outline-none focus:border-emerald-500"
                       >
                         {PORTION_UNITS.map((u, i) => (
                           <option key={u.label} value={i}>

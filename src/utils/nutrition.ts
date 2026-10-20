@@ -239,3 +239,86 @@ export function calcularTotaisDiarios(
     percentFat: calcPercent(gorduras, metas.fat),
   };
 }
+
+/**
+ * Clean and validate an EAN-8 / UPC-A / EAN-13 / GTIN-14 barcode string.
+ */
+export function normalizeBarcode(raw: string): string {
+  return String(raw || '').replace(/\D+/g, '').trim();
+}
+
+/**
+ * Parse an OpenFoodFacts API v0/v2 product payload into a normalized FoodItem (per 100g).
+ */
+export function parseOpenFoodFactsProduct(
+  payload: unknown,
+  barcode: string
+): FoodItem | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const record = payload as {
+    status?: number | string;
+    product?: {
+      product_name_pt?: string;
+      product_name?: string;
+      generic_name_pt?: string;
+      brands?: string;
+      nutriments?: Record<string, unknown>;
+    };
+  };
+
+  if (record.status === 0 || record.status === 'status_not_found' || !record.product) {
+    return null;
+  }
+
+  const p = record.product;
+  const nome = String(
+    p.product_name_pt || p.product_name || p.generic_name_pt || ''
+  ).trim();
+  if (!nome) return null;
+
+  const marcaRaw = String(p.brands || 'Comercial').split(',')[0]?.trim() || 'Comercial';
+  const nutri = p.nutriments || {};
+
+  const num = (v: unknown): number => {
+    const parsed = Number(v);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  };
+
+  let kcal =
+    num(nutri['energy-kcal_100g']) ||
+    num(nutri['energy-kcal_value']) ||
+    num(nutri['energy-kcal']) ||
+    0;
+
+  if (kcal === 0 && num(nutri['energy-kj_100g']) > 0) {
+    kcal = num(nutri['energy-kj_100g']) / 4.184;
+  }
+
+  const prot =
+    num(nutri['proteins_100g']) ||
+    num(nutri['proteins_value']) ||
+    num(nutri['proteins']) ||
+    0;
+  const carb =
+    num(nutri['carbohydrates_100g']) ||
+    num(nutri['carbohydrates_value']) ||
+    num(nutri['carbohydrates']) ||
+    0;
+  const fat =
+    num(nutri['fat_100g']) ||
+    num(nutri['fat_value']) ||
+    num(nutri['fat']) ||
+    0;
+
+  return {
+    nome,
+    marca: marcaRaw,
+    calorias: Math.round(kcal * 10) / 10,
+    proteinas: Math.round(prot * 10) / 10,
+    carboidratos: Math.round(carb * 10) / 10,
+    gorduras: Math.round(fat * 10) / 10,
+    fonte: 'BARCODE',
+    codigoBarras: normalizeBarcode(barcode),
+  };
+}
+

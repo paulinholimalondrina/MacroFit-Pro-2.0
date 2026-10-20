@@ -6,8 +6,92 @@ export interface FoodItem {
   proteinas: number;
   carboidratos: number;
   gorduras: number;
-  fonte: 'TACO_LOCAL' | 'FATSECRET' | 'OPEN_FOOD_FACTS' | 'MANUAL' | string;
+  fonte: 'TACO_LOCAL' | 'FATSECRET' | 'OPEN_FOOD_FACTS' | 'BARCODE' | 'MANUAL' | string;
+  codigoBarras?: string;
 }
+
+export const BARCODE_CATALOG_BR: Record<string, FoodItem> = {
+  '7891000100103': {
+    nome: 'Achocolatado em Pó Nescau 2.0',
+    marca: 'Nestlé',
+    calorias: 370.0,
+    proteinas: 3.5,
+    carboidratos: 85.0,
+    gorduras: 2.0,
+    fonte: 'BARCODE',
+    codigoBarras: '7891000100103',
+  },
+  '7898215151784': {
+    nome: 'Leite UHT Integral Piracanjuba',
+    marca: 'Piracanjuba',
+    calorias: 60.0,
+    proteinas: 3.1,
+    carboidratos: 4.6,
+    gorduras: 3.0,
+    fonte: 'BARCODE',
+    codigoBarras: '7898215151784',
+  },
+  '7898956207016': {
+    nome: 'Pasta de Amendoim Integral Torrado',
+    marca: 'Dr. Peanut',
+    calorias: 595.0,
+    proteinas: 28.0,
+    carboidratos: 16.0,
+    gorduras: 47.0,
+    fonte: 'BARCODE',
+    codigoBarras: '7898956207016',
+  },
+  '7891025114611': {
+    nome: 'Iogurte Grego Tradicional',
+    marca: 'Danone',
+    calorias: 113.0,
+    proteinas: 5.1,
+    carboidratos: 13.0,
+    gorduras: 4.5,
+    fonte: 'BARCODE',
+    codigoBarras: '7891025114611',
+  },
+  '7894900700015': {
+    nome: 'Refrigerante Coca-Cola Sem Açúcar (Zero)',
+    marca: 'Coca-Cola',
+    calorias: 0.0,
+    proteinas: 0.0,
+    carboidratos: 0.0,
+    gorduras: 0.0,
+    fonte: 'BARCODE',
+    codigoBarras: '7894900700015',
+  },
+  '7891000053508': {
+    nome: 'Leite Condensado Moça Tradicional',
+    marca: 'Nestlé',
+    calorias: 325.0,
+    proteinas: 7.5,
+    carboidratos: 55.0,
+    gorduras: 8.0,
+    fonte: 'BARCODE',
+    codigoBarras: '7891000053508',
+  },
+  '7896051111014': {
+    nome: 'Requeijão Cremoso Tradicional',
+    marca: 'Itambé',
+    calorias: 257.0,
+    proteinas: 9.6,
+    carboidratos: 2.4,
+    gorduras: 23.0,
+    fonte: 'BARCODE',
+    codigoBarras: '7896051111014',
+  },
+  '7891350034869': {
+    nome: 'Aveia em Flocos Finos',
+    marca: 'Quaker',
+    calorias: 394.0,
+    proteinas: 13.9,
+    carboidratos: 66.6,
+    gorduras: 8.5,
+    fonte: 'BARCODE',
+    codigoBarras: '7891350034869',
+  },
+};
 
 export const BASE_TACO_EXPANDIDA: FoodItem[] = [
   // Cereais, Grãos e Panificação
