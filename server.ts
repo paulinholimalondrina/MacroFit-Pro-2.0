@@ -1286,6 +1286,7 @@ async function startServer() {
         'src/hooks/usePWAInstall.ts',
         'src/components/PWAInstallModal.tsx',
         'src/components/BarcodeScannerView.tsx',
+        'src/components/WeeklyProgressChart.tsx',
         'src/components/FoodSearchModal.tsx',
         'src/components/MetabolicGoalsView.tsx',
         'src/components/TacoCatalogView.tsx',
@@ -1297,6 +1298,23 @@ async function startServer() {
         'public/pwa-maskable-512x512.png',
         'public/MacroFit-Pro.apk',
       ];
+
+      // Also include pre-built docs/ files for immediate GitHub Pages deployment
+      const docsDir = path.join(process.cwd(), 'docs');
+      if (fs.existsSync(docsDir)) {
+        for (const entry of fs.readdirSync(docsDir, { withFileTypes: true })) {
+          if (entry.isFile() && !entry.name.endsWith('.idsig')) {
+            filesToPublish.push(`docs/${entry.name}`);
+          } else if (entry.isDirectory() && entry.name === 'assets') {
+            const assetsDir = path.join(docsDir, 'assets');
+            for (const assetEntry of fs.readdirSync(assetsDir, { withFileTypes: true })) {
+              if (assetEntry.isFile()) {
+                filesToPublish.push(`docs/assets/${assetEntry.name}`);
+              }
+            }
+          }
+        }
+      }
 
       let uploadedCount = 0;
       for (const relPath of filesToPublish) {

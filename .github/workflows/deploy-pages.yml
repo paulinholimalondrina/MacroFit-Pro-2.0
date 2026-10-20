@@ -18,7 +18,7 @@ jobs:
   deploy:
     runs-on: ubuntu-24.04
     steps:
-      - name: Publish pre-built Web App and Android APK to gh-pages branch
+      - name: Build and Publish Web App + Android APK to gh-pages branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -26,6 +26,12 @@ jobs:
           WORKDIR=$(mktemp -d)
           git clone --depth 1 --branch "${GITHUB_REF_NAME:-main}" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$WORKDIR/repo"
           cd "$WORKDIR/repo"
+
+          # Rebuild latest source into dist/ and docs/ if npm is available
+          if command -v npm >/dev/null 2>&1; then
+            npm install --no-audit --no-fund || true
+            npm run build || true
+          fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -38,7 +44,7 @@ jobs:
           git rm -rf . > /dev/null 2>&1 || true
           cp -r "$STAGE_DIR"/. .
           git add -A
-          git commit -m "chore: deploy MacroFit Pro Web & Android APK to GitHub Pages"
+          git commit -m "chore: deploy MacroFit Pro Web, Recharts 7-Day Progress & Android APK to GitHub Pages"
           git push -f origin gh-pages
 
           # Automatically enable GitHub Pages on gh-pages branch if API allows
