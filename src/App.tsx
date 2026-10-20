@@ -567,7 +567,7 @@ export default function App() {
                 className="min-h-[40px] px-4 py-2 text-xs font-bold text-slate-950 bg-emerald-500 hover:bg-emerald-400 rounded-xl transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
               >
                 <Smartphone className="w-3.5 h-3.5" />
-                Baixar APK Android
+                Baixar APK v2.0
               </button>
             ) : (
               <button

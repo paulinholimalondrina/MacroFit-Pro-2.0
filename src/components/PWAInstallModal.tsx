@@ -20,7 +20,7 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({ isOpen, onClos
     if (isDownloadingApk) return;
     setIsDownloadingApk(true);
     try {
-      const response = await fetch('./MacroFit-Pro.apk');
+      const response = await fetch('./MacroFit-Pro.apk?v=2.0', { cache: 'no-store' });
       if (!response.ok) throw new Error('Falha no download');
       const blob = await response.blob();
       const apkBlob = new Blob([blob], { type: 'application/vnd.android.package-archive' });
@@ -36,7 +36,7 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({ isOpen, onClos
     } catch {
       // Fallback to direct link
       const link = document.createElement('a');
-      link.href = './MacroFit-Pro.apk';
+      link.href = './MacroFit-Pro.apk?v=2.0';
       link.download = 'MacroFit-Pro.apk';
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
@@ -64,10 +64,10 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({ isOpen, onClos
             </div>
             <div>
               <h3 id="pwa-modal-title" className="text-base font-bold text-white">
-                Baixar APK & Instalar no Android
+                Baixar APK v2.0 & Instalar no Android
               </h3>
               <p className="text-xs text-slate-400">
-                Instalador Android (.apk) assinado ou instalação PWA direta
+                Inclui Leitor de Código de Barras (Câmera) + Base TACO
               </p>
             </div>
           </div>
@@ -88,13 +88,13 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({ isOpen, onClos
               <PackageCheck className="w-4 h-4 text-emerald-400" />
               Pacote Android Compilado (MacroFit-Pro.apk)
             </span>
-            <span className="text-[11px] font-mono text-slate-400">v1.0 · Assinado</span>
+            <span className="text-[11px] font-mono text-emerald-400 font-semibold">v2.0 · Câmera + TACO</span>
           </div>
           <p className="text-xs text-slate-300 mb-3 leading-relaxed">
-            Baixe o arquivo <strong className="text-white">.apk</strong> nativo com a base TACO embutida e sincronização com a nuvem pronta para o seu celular Android:
+            Baixe a nova versão <strong className="text-white">v2.0 (.apk)</strong> com o <strong className="text-emerald-300">Leitor de Código de Barras por Câmera</strong>, base TACO embutida e sincronização na nuvem:
           </p>
           <a
-            href="./MacroFit-Pro.apk"
+            href="./MacroFit-Pro.apk?v=2.0"
             download="MacroFit-Pro.apk"
             onClick={handleDownloadApk}
             className="w-full min-h-[48px] rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer"
@@ -103,8 +103,8 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({ isOpen, onClos
             {isDownloadingApk
               ? 'Preparando Download...'
               : apkDownloaded
-                ? 'Download Iniciado (Baixar Novamente)'
-                : 'Baixar MacroFit-Pro.apk'}
+                ? 'Download v2.0 Iniciado (Baixar Novamente)'
+                : 'Baixar MacroFit-Pro.apk (v2.0)'}
           </a>
         </div>
 
@@ -167,9 +167,9 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({ isOpen, onClos
                 1
               </span>
               <div>
-                <p className="font-semibold text-white">Toque em "Baixar MacroFit-Pro.apk" acima</p>
+                <p className="font-semibold text-white">Desinstale a versão anterior (v1.0) se já estiver no celular</p>
                 <p className="text-slate-400 mt-0.5">
-                  Transfira para o seu celular Android ou baixe diretamente pelo navegador do celular.
+                  Como o arquivo APK fica gravado no aparelho, desinstale o APK antigo antes de instalar o novo <strong className="text-slate-200">v2.0</strong> para evitar conflito de assinatura do Android.
                 </p>
               </div>
             </li>
@@ -178,9 +178,9 @@ export const PWAInstallModal: React.FC<PWAInstallModalProps> = ({ isOpen, onClos
                 2
               </span>
               <div>
-                <p className="font-semibold text-white">Abra o arquivo baixado para instalar</p>
+                <p className="font-semibold text-white">Baixe e instale o novo MacroFit-Pro.apk (v2.0)</p>
                 <p className="text-slate-400 mt-0.5">
-                  Caso o Android peça confirmação, permita a instalação e se o Play Protect exibir aviso de desenvolvedor independente, toque em <strong className="text-slate-200">"Mais detalhes → Instalar assim mesmo"</strong>.
+                  Toque no botão verde acima e abra o arquivo baixado. Se o Play Protect exibir aviso, toque em <strong className="text-slate-200">"Mais detalhes → Instalar assim mesmo"</strong>.
                 </p>
               </div>
             </li>
