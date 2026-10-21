@@ -388,12 +388,23 @@ export default function App() {
               metas?: Partial<MetabolicGoals>;
               agua?: number;
               diario?: Record<string, DiaryEntry[]>;
+              categorias?: string[];
             };
 
             if (data.metas) {
               const mergedMetas = { ...DEFAULT_METAS, ...data.metas };
               setMetas(mergedMetas);
               localStorage.setItem('macrofit_metas', JSON.stringify(mergedMetas));
+            }
+
+            if (data.categorias && Array.isArray(data.categorias) && data.categorias.length > 0) {
+              setCategories((prev) => {
+                const missing = data.categorias!.filter((c) => !prev.includes(c));
+                if (missing.length === 0) return prev;
+                const updated = [...prev, ...missing];
+                localStorage.setItem('macrofit_categorias', JSON.stringify(updated));
+                return updated;
+              });
             }
 
             const cloudAgua = Number(data.agua) || 0;
@@ -416,6 +427,65 @@ export default function App() {
                 localStorage.setItem('macrofit_categorias', JSON.stringify(updated));
                 return updated;
               });
+            }
+
+            // Sync global custom categories from cloud (saved in special 2000-01-01 config)
+            try {
+              const catResp = await fetch(
+                `${base}/api/usuario/dados-completos?data=2000-01-01`,
+                {
+                  headers: { Authorization: activeToken },
+                  signal: AbortSignal.timeout(4000),
+                }
+              );
+              if (catResp.ok) {
+                const catData = (await catResp.json()) as { diario?: Record<string, DiaryEntry[]> };
+                const remoteCustomCats = Object.keys(catData.diario || {});
+                if (remoteCustomCats.length > 0) {
+                  setCategories((prev) => {
+                    const missing = remoteCustomCats.filter((c) => !prev.includes(c));
+                    if (missing.length === 0) return prev;
+                    const updated = [...prev, ...missing];
+                    localStorage.setItem('macrofit_categorias', JSON.stringify(updated));
+                    return updated;
+                  });
+                }
+
+                // Also ensure any local custom categories are uploaded to cloud if missing
+                const savedCatsRaw = localStorage.getItem('macrofit_categorias');
+                if (savedCatsRaw) {
+                  try {
+                    const savedCats = JSON.parse(savedCatsRaw) as string[];
+                    for (const cat of savedCats) {
+                      if (!DEFAULT_CATEGORIES.includes(cat) && !remoteCustomCats.includes(cat)) {
+                        fetch(`${base}/api/usuario/refeicao`, {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            Authorization: activeToken,
+                          },
+                          body: JSON.stringify({
+                            data: '2000-01-01',
+                            categoria: cat,
+                            nome: '__CAT_DEF__',
+                            marca: 'CONFIG',
+                            quantidade: 0,
+                            unidade_desc: '0',
+                            calorias: 0,
+                            proteinas: 0,
+                            carboidratos: 0,
+                            gorduras: 0,
+                          }),
+                        }).catch(() => {});
+                      }
+                    }
+                  } catch {
+                    // ignore
+                  }
+                }
+              }
+            } catch {
+              // ignore
             }
 
             setLastSyncStatus('synced');
@@ -748,7 +818,7 @@ export default function App() {
   };
 
   // Add Custom Meal Category
-  const handleCreateCategory = (e: React.FormEvent) => {
+  const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = newCategoryName.trim();
     if (!trimmed) return;
@@ -756,16 +826,69 @@ export default function App() {
       const updated = [...categories, trimmed];
       setCategories(updated);
       localStorage.setItem('macrofit_categorias', JSON.stringify(updated));
+
+      // Persist to Cloud so all devices receive the new category immediately
+      if (authToken) {
+        const base = (apiBaseUrl || PRODUCTION_API_URL).replace(/\/+$/, '');
+        try {
+          await fetch(`${base}/api/usuario/refeicao`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: authToken,
+            },
+            body: JSON.stringify({
+              data: '2000-01-01',
+              categoria: trimmed,
+              nome: '__CAT_DEF__',
+              marca: 'CONFIG',
+              quantidade: 0,
+              unidade_desc: '0',
+              calorias: 0,
+              proteinas: 0,
+              carboidratos: 0,
+              gorduras: 0,
+            }),
+          });
+        } catch {
+          // Saved locally
+        }
+      }
     }
     setNewCategoryName('');
     setIsCategoryModalOpen(false);
   };
 
-  const handleRemoveCategory = (catName: string) => {
+  const handleRemoveCategory = async (catName: string) => {
     if (categories.length <= 1) return;
     const updated = categories.filter((c) => c !== catName);
     setCategories(updated);
     localStorage.setItem('macrofit_categorias', JSON.stringify(updated));
+
+    // Remove category marker from Cloud
+    if (authToken) {
+      const base = (apiBaseUrl || PRODUCTION_API_URL).replace(/\/+$/, '');
+      try {
+        const resp = await fetch(`${base}/api/usuario/dados-completos?data=2000-01-01`, {
+          headers: { Authorization: authToken },
+          signal: AbortSignal.timeout(3500),
+        });
+        if (resp.ok) {
+          const data = (await resp.json()) as { diario?: Record<string, Array<{ id: number; nome?: string }>> };
+          const entries = data?.diario?.[catName] || [];
+          for (const item of entries) {
+            if (item.nome === '__CAT_DEF__') {
+              await fetch(`${base}/api/usuario/refeicao/${item.id}`, {
+                method: 'DELETE',
+                headers: { Authorization: authToken },
+              });
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
   };
 
   const totais = useMemo(() => calcularTotaisDiarios(diario, metas), [diario, metas]);
@@ -1226,7 +1349,7 @@ export default function App() {
             {/* Meal Categories Grid (2 columns on desktop, 1 on mobile) */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {categories.map((categoria) => {
-                const items = diario[categoria] || [];
+                const items = (diario[categoria] || []).filter((i) => i.nome !== '__CAT_DEF__');
                 const catKcal = Math.round(
                   items.reduce((acc, i) => acc + (Number(i.calorias) || 0), 0)
                 );

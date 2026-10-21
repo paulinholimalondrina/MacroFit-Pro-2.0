@@ -572,6 +572,7 @@ async function startServer() {
 
         const diario: Record<string, DiaryEntry[]> = {};
         for (const r of diarioRes.rows) {
+          if (dataStr !== '2000-01-01' && r.nome === '__CAT_DEF__') continue;
           const cat = String(r.categoria);
           if (!diario[cat]) diario[cat] = [];
           diario[cat].push({
@@ -588,7 +589,13 @@ async function startServer() {
           });
         }
 
-        res.json({ metas, agua, diario, source: 'neon_postgresql' });
+        const catsRes = await pgPool.query(
+          'SELECT DISTINCT categoria FROM diario_refeicoes WHERE user_id = $1',
+          [user.id]
+        );
+        const categorias = catsRes.rows.map((r: { categoria: string }) => r.categoria);
+
+        res.json({ metas, agua, diario, categorias, source: 'neon_postgresql' });
         return;
       } catch (err) {
         console.warn('PG dados-completos error:', (err as Error).message);

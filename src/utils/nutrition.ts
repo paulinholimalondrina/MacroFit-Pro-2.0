@@ -210,6 +210,7 @@ export function calcularTotaisDiarios(
   for (const items of Object.values(diario)) {
     if (!Array.isArray(items)) continue;
     for (const item of items) {
+      if (item.nome === '__CAT_DEF__') continue;
       calorias += Number(item.calorias) || 0;
       proteinas += Number(item.proteinas) || 0;
       carboidratos += Number(item.carboidratos) || 0;
