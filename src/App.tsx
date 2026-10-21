@@ -20,6 +20,9 @@ import {
   FolderPlus,
   ScanBarcode,
   X,
+  Cloud,
+  CloudOff,
+  RefreshCw,
 } from 'lucide-react';
 import type { FoodItem } from './data/tacoDatabase.ts';
 import {
@@ -117,6 +120,43 @@ export default function App() {
     return [];
   });
 
+  // Production Render API backend URL connected to Neon PostgreSQL
+  const PRODUCTION_API_URL = 'https://macrofit-pro-1.onrender.com';
+
+  function resolveInitialApiUrl(): string {
+    try {
+      const saved = localStorage.getItem('macrofit_backend_url');
+      // Auto-repair obsolete/dead Google Cloud Run or ephemeral preview URLs
+      if (
+        saved &&
+        (saved.includes('.run.app') ||
+          saved.includes('ais-pre') ||
+          saved.includes('ais-dev') ||
+          saved.includes('COLE_AQUI'))
+      ) {
+        localStorage.setItem('macrofit_backend_url', PRODUCTION_API_URL);
+        return PRODUCTION_API_URL;
+      }
+      if (saved !== null && saved.trim() !== '') {
+        return saved.trim();
+      }
+      // When hosted on GitHub Pages or any external web domain, default directly to Render production
+      if (
+        typeof window !== 'undefined' &&
+        (window.location.protocol === 'file:' ||
+          window.location.hostname.endsWith('github.io') ||
+          (!window.location.hostname.includes('localhost') &&
+            !window.location.hostname.includes('127.0.0.1') &&
+            !window.location.hostname.includes('run.app')))
+      ) {
+        return PRODUCTION_API_URL;
+      }
+    } catch {
+      // ignore
+    }
+    return '';
+  }
+
   // Multi-user Auth & Backend API URL
   const [currentUser, setCurrentUser] = useState<string | null>(() =>
     localStorage.getItem('macrofit_usuario')
@@ -124,17 +164,7 @@ export default function App() {
   const [authToken, setAuthToken] = useState<string | null>(() =>
     localStorage.getItem('macrofit_token')
   );
-  const [apiBaseUrl, setApiBaseUrl] = useState<string>(() => {
-    const saved = localStorage.getItem('macrofit_backend_url');
-    if (saved !== null) return saved;
-    if (
-      typeof window !== 'undefined' &&
-      (window.location.protocol === 'file:' || window.location.hostname.endsWith('github.io'))
-    ) {
-      return 'https://ais-pre-bni4jp6evocwom3vuscuhd-481614738372.us-east5.run.app';
-    }
-    return '';
-  });
+  const [apiBaseUrl, setApiBaseUrl] = useState<string>(resolveInitialApiUrl);
   const [serverStatus, setServerStatus] = useState<{
     online: boolean;
     database: string;
@@ -142,8 +172,13 @@ export default function App() {
   }>({
     online: true,
     database: 'neon_postgresql',
-    message: 'API Híbrida TACO + FatSecret Ativa',
+    message: 'Servidor Render (Neon PostgreSQL) Conectado',
   });
+
+  // Cloud sync state
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncStatus, setLastSyncStatus] = useState<'synced' | 'pending' | 'offline' | 'error'>('synced');
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
   // Modals
   const [foodModalCategory, setFoodModalCategory] = useState<string | null>(null);
@@ -154,34 +189,70 @@ export default function App() {
 
   const { isInstalled } = usePWAInstall();
 
-  // Check API status
+  // Check API status with multi-route fallback
   const testBackendConnection = useCallback(
     async (overrideUrl?: string) => {
       const base = (overrideUrl !== undefined ? overrideUrl : apiBaseUrl).replace(/\/+$/, '');
       try {
-        // Try /api/status first, then root /
         const resp = await fetch(`${base}/api/status`);
         if (resp.ok) {
           const data = (await resp.json()) as { database?: string; mensagem?: string };
           setServerStatus({
             online: true,
             database: data.database || 'neon_postgresql',
-            message: data.mensagem || 'Servidor Integrado TACO + FatSecret Conectado',
+            message: data.mensagem || 'Servidor Integrado Conectado',
           });
           return;
         }
+      } catch {
+        // try next
+      }
+
+      // Render FastAPI docs/openapi check
+      try {
+        const docResp = await fetch(`${base}/openapi.json`);
+        if (docResp.ok) {
+          setServerStatus({
+            online: true,
+            database: 'neon_postgresql',
+            message: 'Servidor Render (Neon PostgreSQL) Conectado',
+          });
+          return;
+        }
+      } catch {
+        // try next
+      }
+
+      // Ping alimentos endpoint
+      try {
+        const foodResp = await fetch(`${base}/api/alimentos?q=arroz`);
+        if (foodResp.ok) {
+          setServerStatus({
+            online: true,
+            database: 'neon_postgresql',
+            message: 'Servidor Render API Ativo',
+          });
+          return;
+        }
+      } catch {
+        // try next
+      }
+
+      // Root check
+      try {
         const rootResp = await fetch(`${base}/`);
         if (rootResp.ok) {
           setServerStatus({
             online: true,
             database: 'neon_postgresql',
-            message: 'Servidor API Externo Conectado',
+            message: 'Servidor API Conectado',
           });
           return;
         }
       } catch {
-        // Fallback offline
+        // offline
       }
+
       setServerStatus({
         online: false,
         database: 'offline_taco',
@@ -195,11 +266,32 @@ export default function App() {
     testBackendConnection();
   }, [testBackendConnection]);
 
-  // Load daily data from Cloud (if logged in) or LocalStorage
+  // Load daily data from Cloud (if logged in) or LocalStorage with Bidirectional Sync
   const loadDayData = useCallback(
     async (dateStr: string) => {
       const base = apiBaseUrl.replace(/\/+$/, '');
+
+      // 1. First, read local storage so the UI immediately shows local data (no flash)
+      let localDiario: Record<string, DiaryEntry[]> = {};
+      let localAgua = 0;
+      try {
+        const savedDiario = localStorage.getItem(`macrofit_diario_${dateStr}`);
+        const savedAgua = localStorage.getItem(`macrofit_agua_${dateStr}`);
+        if (savedDiario) {
+          localDiario = JSON.parse(savedDiario);
+          setDiario(localDiario);
+        }
+        if (savedAgua) {
+          localAgua = parseFloat(savedAgua) || 0;
+          setAguaAtual(localAgua);
+        }
+      } catch {
+        // ignore
+      }
+
+      // 2. If logged in with authToken, fetch from cloud and do a two-way sync
       if (authToken) {
+        setIsSyncing(true);
         try {
           const resp = await fetch(
             `${base}/api/usuario/dados-completos?data=${encodeURIComponent(dateStr)}`,
@@ -213,116 +305,239 @@ export default function App() {
               agua?: number;
               diario?: Record<string, DiaryEntry[]>;
             };
+
             if (data.metas) {
               const mergedMetas = { ...DEFAULT_METAS, ...data.metas };
               setMetas(mergedMetas);
               localStorage.setItem('macrofit_metas', JSON.stringify(mergedMetas));
             }
+
             const cloudAgua = Number(data.agua) || 0;
             const cloudDiario = data.diario || {};
-            setAguaAtual(cloudAgua);
-            setDiario(cloudDiario);
-            localStorage.setItem(`macrofit_agua_${dateStr}`, String(cloudAgua));
-            localStorage.setItem(`macrofit_diario_${dateStr}`, JSON.stringify(cloudDiario));
 
-            // Ensure any categories returned from cloud diary exist in category list
-            const cloudCats = Object.keys(cloudDiario);
-            if (cloudCats.length > 0) {
+            // TWO-WAY MERGE:
+            // Combine cloud meals and any local meals that were added while offline
+            const mergedDiario: Record<string, DiaryEntry[]> = {};
+            for (const [cat, items] of Object.entries(cloudDiario)) {
+              mergedDiario[cat] = [...items];
+            }
+
+            // Check if local has items that haven't been pushed to the cloud yet
+            for (const [cat, locItems] of Object.entries(localDiario)) {
+              if (!mergedDiario[cat]) mergedDiario[cat] = [];
+              const cloudCatItems = mergedDiario[cat];
+
+              for (const locItem of locItems) {
+                const exists = cloudCatItems.some(
+                  (ci) =>
+                    ci.id === locItem.id ||
+                    (ci.nome.toLowerCase() === locItem.nome.toLowerCase() &&
+                      Math.abs(ci.calorias - locItem.calorias) < 2 &&
+                      Math.abs(ci.quantidade - locItem.quantidade) < 1)
+                );
+
+                if (!exists) {
+                  // Upload this local meal to cloud now
+                  try {
+                    const postResp = await fetch(`${base}/api/usuario/refeicao`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: authToken,
+                      },
+                      body: JSON.stringify({
+                        data: dateStr,
+                        categoria: locItem.categoria || cat,
+                        nome: locItem.nome,
+                        marca: locItem.marca || 'Manual',
+                        quantidade: locItem.quantidade,
+                        unidade_desc: locItem.unidadeDesc || `${locItem.quantidade}g`,
+                        calorias: locItem.calorias,
+                        proteinas: locItem.proteinas,
+                        carboidratos: locItem.carboidratos,
+                        gorduras: locItem.gorduras,
+                      }),
+                    });
+                    if (postResp.ok) {
+                      const postData = (await postResp.json()) as { id?: number };
+                      cloudCatItems.push({
+                        ...locItem,
+                        id: postData.id || locItem.id,
+                      });
+                    } else {
+                      cloudCatItems.push(locItem);
+                    }
+                  } catch {
+                    cloudCatItems.push(locItem);
+                  }
+                }
+              }
+            }
+
+            // Water sync: choose highest recorded, sync to cloud if local was higher
+            let finalAgua = Math.max(localAgua, cloudAgua);
+            if (localAgua > cloudAgua) {
+              try {
+                await fetch(`${base}/api/usuario/agua`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: authToken,
+                  },
+                  body: JSON.stringify({ data: dateStr, quantidade: localAgua }),
+                });
+              } catch {
+                // ignore
+              }
+            }
+
+            setAguaAtual(finalAgua);
+            setDiario(mergedDiario);
+            localStorage.setItem(`macrofit_agua_${dateStr}`, String(finalAgua));
+            localStorage.setItem(`macrofit_diario_${dateStr}`, JSON.stringify(mergedDiario));
+
+            // Ensure all meal categories exist in the UI list
+            const allCats = Object.keys(mergedDiario);
+            if (allCats.length > 0) {
               setCategories((prev) => {
-                const missing = cloudCats.filter((c) => !prev.includes(c));
+                const missing = allCats.filter((c) => !prev.includes(c));
                 if (missing.length === 0) return prev;
                 const updated = [...prev, ...missing];
                 localStorage.setItem('macrofit_categorias', JSON.stringify(updated));
                 return updated;
               });
             }
+
+            setLastSyncStatus('synced');
+            setLastSyncTime(
+              new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+            );
+            setIsSyncing(false);
             return;
+          } else if (resp.status === 401 || resp.status === 403) {
+            setLastSyncStatus('error');
           }
         } catch {
-          // Fallback to localStorage if offline
+          setLastSyncStatus('offline');
+        } finally {
+          setIsSyncing(false);
         }
       }
 
-      // LocalStorage fallback (with deterministic initial seed for today if brand new)
-      try {
-        const savedDiario = localStorage.getItem(`macrofit_diario_${dateStr}`);
-        const savedAgua = localStorage.getItem(`macrofit_agua_${dateStr}`);
-
-        if (savedDiario) {
-          setDiario(JSON.parse(savedDiario));
-        } else if (dateStr === getTodayISO() && !localStorage.getItem('macrofit_seeded_v1')) {
-          const initialSeed: Record<string, DiaryEntry[]> = {
-            'Café da Manhã': [
-              {
-                id: 101,
-                categoria: 'Café da Manhã',
-                nome: 'Ovo de Galinha Inteiro Cozido',
-                marca: 'Ovos / TACO',
-                quantidade: 2,
-                unidadeDesc: '2 unid. (100g)',
-                calorias: 146,
-                proteinas: 13.3,
-                carboidratos: 0.6,
-                gorduras: 9.5,
-              },
-              {
-                id: 102,
-                categoria: 'Café da Manhã',
-                nome: 'Aveia em Flocos Finos',
-                marca: 'Quaker / TACO',
-                quantidade: 40,
-                unidadeDesc: '40g',
-                calorias: 158,
-                proteinas: 5.6,
-                carboidratos: 26.6,
-                gorduras: 3.4,
-              },
-            ],
-            Almoço: [
-              {
-                id: 103,
-                categoria: 'Almoço',
-                nome: 'Peito de Frango Grelhado',
-                marca: 'Aves / TACO',
-                quantidade: 150,
-                unidadeDesc: '150g',
-                calorias: 239,
-                proteinas: 48.0,
-                carboidratos: 0.0,
-                gorduras: 3.8,
-              },
-              {
-                id: 104,
-                categoria: 'Almoço',
-                nome: 'Arroz Branco Cozido',
-                marca: 'Cereais / TACO',
-                quantidade: 120,
-                unidadeDesc: '120g',
-                calorias: 154,
-                proteinas: 3.0,
-                carboidratos: 33.7,
-                gorduras: 0.2,
-              },
-            ],
-          };
-          localStorage.setItem('macrofit_seeded_v1', 'true');
-          localStorage.setItem(`macrofit_diario_${dateStr}`, JSON.stringify(initialSeed));
-          localStorage.setItem(`macrofit_agua_${dateStr}`, '750');
-          setDiario(initialSeed);
-          setAguaAtual(750);
-          return;
-        } else {
-          setDiario({});
-        }
-
-        setAguaAtual(savedAgua ? parseFloat(savedAgua) || 0 : 0);
-      } catch {
+      // Fallback for offline or non-logged-in state
+      if (Object.keys(localDiario).length > 0) {
+        setDiario(localDiario);
+      } else if (
+        dateStr === getTodayISO() &&
+        !localStorage.getItem('macrofit_seeded_v1') &&
+        !currentUser
+      ) {
+        const initialSeed: Record<string, DiaryEntry[]> = {
+          'Café da Manhã': [
+            {
+              id: 101,
+              categoria: 'Café da Manhã',
+              nome: 'Ovo de Galinha Inteiro Cozido',
+              marca: 'Ovos / TACO',
+              quantidade: 2,
+              unidadeDesc: '2 unid. (100g)',
+              calorias: 146,
+              proteinas: 13.3,
+              carboidratos: 0.6,
+              gorduras: 9.5,
+            },
+            {
+              id: 102,
+              categoria: 'Café da Manhã',
+              nome: 'Aveia em Flocos Finos',
+              marca: 'Quaker / TACO',
+              quantidade: 40,
+              unidadeDesc: '40g',
+              calorias: 158,
+              proteinas: 5.6,
+              carboidratos: 26.6,
+              gorduras: 3.4,
+            },
+          ],
+          Almoço: [
+            {
+              id: 103,
+              categoria: 'Almoço',
+              nome: 'Peito de Frango Grelhado',
+              marca: 'Aves / TACO',
+              quantidade: 150,
+              unidadeDesc: '150g',
+              calorias: 239,
+              proteinas: 48.0,
+              carboidratos: 0.0,
+              gorduras: 3.8,
+            },
+            {
+              id: 104,
+              categoria: 'Almoço',
+              nome: 'Arroz Branco Cozido',
+              marca: 'Cereais / TACO',
+              quantidade: 120,
+              unidadeDesc: '120g',
+              calorias: 154,
+              proteinas: 3.0,
+              carboidratos: 33.7,
+              gorduras: 0.2,
+            },
+          ],
+        };
+        localStorage.setItem('macrofit_seeded_v1', 'true');
+        localStorage.setItem(`macrofit_diario_${dateStr}`, JSON.stringify(initialSeed));
+        localStorage.setItem(`macrofit_agua_${dateStr}`, '750');
+        setDiario(initialSeed);
+        setAguaAtual(750);
+        return;
+      } else {
         setDiario({});
-        setAguaAtual(0);
+      }
+
+      setAguaAtual(localAgua);
+    },
+    [apiBaseUrl, authToken, currentUser]
+  );
+
+  // Preload historical 7-day data from cloud in background so the WeeklyProgressChart is accurate
+  const loadWeeklyFromCloud = useCallback(
+    async (token?: string | null, baseUrl?: string) => {
+      const activeToken = token || authToken;
+      const base = (baseUrl || apiBaseUrl).replace(/\/+$/, '');
+      if (!activeToken) return;
+
+      const recentSeven = getUltimos7DiasISO(getTodayISO());
+      for (const d of recentSeven) {
+        if (d === currentDate) continue;
+        try {
+          const resp = await fetch(
+            `${base}/api/usuario/dados-completos?data=${encodeURIComponent(d)}`,
+            { headers: { Authorization: activeToken } }
+          );
+          if (resp.ok) {
+            const data = (await resp.json()) as { diario?: Record<string, DiaryEntry[]> };
+            if (data.diario && Object.keys(data.diario).length > 0) {
+              localStorage.setItem(`macrofit_diario_${d}`, JSON.stringify(data.diario));
+            }
+          }
+        } catch {
+          // ignore
+        }
       }
     },
-    [apiBaseUrl, authToken]
+    [apiBaseUrl, authToken, currentDate]
   );
+
+  // Manual sync trigger
+  const triggerManualSync = useCallback(async () => {
+    await testBackendConnection();
+    await loadDayData(currentDate);
+    if (authToken) {
+      await loadWeeklyFromCloud(authToken, apiBaseUrl);
+    }
+  }, [testBackendConnection, loadDayData, loadWeeklyFromCloud, currentDate, authToken, apiBaseUrl]);
 
   useEffect(() => {
     loadDayData(currentDate);
@@ -730,6 +945,43 @@ export default function App() {
                     Hoje
                   </button>
                 )}
+
+                {/* Cloud Sync Status & Manual Trigger */}
+                {currentUser && authToken ? (
+                  <button
+                    type="button"
+                    onClick={triggerManualSync}
+                    disabled={isSyncing}
+                    title="Clique para sincronizar com o computador e nuvem agora"
+                    className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/40 text-slate-200 transition-colors flex items-center gap-2 cursor-pointer text-xs shrink-0"
+                  >
+                    {isSyncing ? (
+                      <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin shrink-0" />
+                    ) : lastSyncStatus === 'offline' ? (
+                      <CloudOff className="w-4 h-4 text-amber-400 shrink-0" />
+                    ) : (
+                      <Cloud className="w-4 h-4 text-emerald-400 shrink-0" />
+                    )}
+                    <span className="font-semibold text-emerald-400 hidden sm:inline">
+                      {isSyncing ? 'Sincronizando...' : `@${currentUser}`}
+                    </span>
+                    {lastSyncTime && (
+                      <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
+                        ({lastSyncTime})
+                      </span>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('conta')}
+                    title="Entre com seu usuário para sincronizar entre celular e PC"
+                    className="min-h-[44px] px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+                  >
+                    <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span className="hidden sm:inline">Entrar p/ Sincronizar</span>
+                  </button>
+                )}
               </div>
 
               {/* Hydration Quick Tracker */}
@@ -1049,11 +1301,15 @@ export default function App() {
             authToken={authToken}
             apiBaseUrl={apiBaseUrl}
             serverStatus={serverStatus}
-            onLoginSuccess={(user, token) => {
+            isSyncing={isSyncing}
+            onSyncNow={triggerManualSync}
+            onLoginSuccess={async (user, token) => {
               setCurrentUser(user);
               setAuthToken(token);
               localStorage.setItem('macrofit_usuario', user);
               localStorage.setItem('macrofit_token', token);
+              await loadDayData(currentDate);
+              loadWeeklyFromCloud(token, apiBaseUrl);
             }}
             onLogout={() => {
               setCurrentUser(null);

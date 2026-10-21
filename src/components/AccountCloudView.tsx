@@ -6,6 +6,8 @@ interface AccountCloudViewProps {
   authToken: string | null;
   apiBaseUrl: string;
   serverStatus: { online: boolean; database: string; message: string };
+  isSyncing?: boolean;
+  onSyncNow?: () => void;
   onLoginSuccess: (username: string, token: string) => void;
   onLogout: () => void;
   onUpdateApiBaseUrl: (newUrl: string) => void;
@@ -18,6 +20,8 @@ export const AccountCloudView: React.FC<AccountCloudViewProps> = ({
   authToken,
   apiBaseUrl,
   serverStatus,
+  isSyncing = false,
+  onSyncNow,
   onLoginSuccess,
   onLogout,
   onUpdateApiBaseUrl,
@@ -33,6 +37,10 @@ export const AccountCloudView: React.FC<AccountCloudViewProps> = ({
 
   const [customUrlInput, setCustomUrlInput] = useState(apiBaseUrl);
   const [isTestingUrl, setIsTestingUrl] = useState(false);
+
+  useEffect(() => {
+    setCustomUrlInput(apiBaseUrl);
+  }, [apiBaseUrl]);
 
   // GitHub Publisher State
   const [ghStatus, setGhStatus] = useState<{
@@ -252,14 +260,27 @@ export const AccountCloudView: React.FC<AccountCloudViewProps> = ({
               Todas as suas refeições diárias, consumo de água e metas metabólicas estão sendo salvas automaticamente na sua conta.
             </p>
 
-            <button
-              type="button"
-              onClick={onLogout}
-              className="w-full min-h-[46px] rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <LogOut className="w-4 h-4" />
-              Sair da Conta / Trocar Usuário
-            </button>
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              {onSyncNow && (
+                <button
+                  type="button"
+                  onClick={onSyncNow}
+                  disabled={isSyncing}
+                  className="flex-1 min-h-[46px] rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-emerald-400' : ''}`} />
+                  {isSyncing ? 'Sincronizando com a Nuvem...' : 'Sincronizar com a Nuvem Agora'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onLogout}
+                className="min-h-[46px] px-4 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                Sair
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-4">
@@ -438,28 +459,18 @@ export const AccountCloudView: React.FC<AccountCloudViewProps> = ({
           <div className="flex flex-wrap gap-2 pt-1">
             <button
               type="button"
-              onClick={() => handleSaveAndTestUrl('')}
-              className="px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-xs text-emerald-400 font-medium border border-slate-700/80 transition-colors cursor-pointer"
-            >
-              Usar Servidor Integrado (Padrão)
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                handleSaveAndTestUrl(
-                  'https://ais-pre-bni4jp6evocwom3vuscuhd-481614738372.us-east5.run.app'
-                )
-              }
-              className="px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-xs text-emerald-300 font-medium border border-emerald-500/30 transition-colors cursor-pointer"
-            >
-              Nuvem AI Studio (Online)
-            </button>
-            <button
-              type="button"
               onClick={() => handleSaveAndTestUrl('https://macrofit-pro-1.onrender.com')}
-              className="px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-xs text-slate-300 border border-slate-700/80 transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-xs text-emerald-300 font-bold border border-emerald-500/40 transition-colors cursor-pointer flex items-center gap-1.5"
             >
-              Render (macrofit-pro-1)
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              Render Oficial (macrofit-pro-1.onrender.com) · Nuvem Ativa
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSaveAndTestUrl('')}
+              className="px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-xs text-slate-300 font-medium border border-slate-700/80 transition-colors cursor-pointer"
+            >
+              Servidor Local (Vazio)
             </button>
             <button
               type="button"
