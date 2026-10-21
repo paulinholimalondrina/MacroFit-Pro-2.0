@@ -23,6 +23,7 @@ import {
   Cloud,
   CloudOff,
   RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import type { FoodItem } from './data/tacoDatabase.ts';
 import {
@@ -177,7 +178,7 @@ export default function App() {
 
   // Cloud sync state
   const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncStatus, setLastSyncStatus] = useState<'synced' | 'pending' | 'offline' | 'error'>('synced');
+  const [lastSyncStatus, setLastSyncStatus] = useState<'synced' | 'pending' | 'offline' | 'error' | 'expired'>('synced');
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
   // Modals
@@ -193,8 +194,31 @@ export default function App() {
   const testBackendConnection = useCallback(
     async (overrideUrl?: string) => {
       const base = (overrideUrl !== undefined ? overrideUrl : apiBaseUrl).replace(/\/+$/, '');
+
+      // On Render, check openapi.json directly first to avoid 404 delays
+      if (base.includes('onrender.com')) {
+        try {
+          const docResp = await fetch(`${base}/openapi.json`, {
+            signal: AbortSignal.timeout(3500),
+          });
+          if (docResp.ok) {
+            setServerStatus({
+              online: true,
+              database: 'neon_postgresql',
+              message: 'Servidor Render (Neon PostgreSQL) Conectado',
+            });
+            return;
+          }
+        } catch {
+          // try next
+        }
+      }
+
+      // Primary route: /api/status
       try {
-        const resp = await fetch(`${base}/api/status`);
+        const resp = await fetch(`${base}/api/status`, {
+          signal: AbortSignal.timeout(3500),
+        });
         if (resp.ok) {
           const data = (await resp.json()) as { database?: string; mensagem?: string };
           setServerStatus({
@@ -210,7 +234,9 @@ export default function App() {
 
       // Render FastAPI docs/openapi check
       try {
-        const docResp = await fetch(`${base}/openapi.json`);
+        const docResp = await fetch(`${base}/openapi.json`, {
+          signal: AbortSignal.timeout(3500),
+        });
         if (docResp.ok) {
           setServerStatus({
             online: true,
@@ -225,7 +251,9 @@ export default function App() {
 
       // Ping alimentos endpoint
       try {
-        const foodResp = await fetch(`${base}/api/alimentos?q=arroz`);
+        const foodResp = await fetch(`${base}/api/alimentos?q=arroz`, {
+          signal: AbortSignal.timeout(3500),
+        });
         if (foodResp.ok) {
           setServerStatus({
             online: true,
@@ -240,7 +268,9 @@ export default function App() {
 
       // Root check
       try {
-        const rootResp = await fetch(`${base}/`);
+        const rootResp = await fetch(`${base}/`, {
+          signal: AbortSignal.timeout(3500),
+        });
         if (rootResp.ok) {
           setServerStatus({
             online: true,
@@ -266,12 +296,13 @@ export default function App() {
     testBackendConnection();
   }, [testBackendConnection]);
 
-  // Load daily data from Cloud (if logged in) or LocalStorage with Bidirectional Sync
+  // Load daily data from Cloud (if logged in) or LocalStorage with Cloud as Single Source of Truth
   const loadDayData = useCallback(
-    async (dateStr: string) => {
-      const base = apiBaseUrl.replace(/\/+$/, '');
+    async (dateStr: string, tokenOverride?: string | null, baseUrlOverride?: string) => {
+      const activeToken = tokenOverride !== undefined ? tokenOverride : authToken;
+      const base = (baseUrlOverride || apiBaseUrl || PRODUCTION_API_URL).replace(/\/+$/, '');
 
-      // 1. First, read local storage so the UI immediately shows local data (no flash)
+      // 1. Read existing local storage data first so the UI renders instantly
       let localDiario: Record<string, DiaryEntry[]> = {};
       let localAgua = 0;
       try {
@@ -286,19 +317,72 @@ export default function App() {
           setAguaAtual(localAgua);
         }
       } catch {
-        // ignore
+        // ignore storage parse errors
       }
 
-      // 2. If logged in with authToken, fetch from cloud and do a two-way sync
-      if (authToken) {
+      // 2. If logged in with activeToken, fetch authoritative data from the cloud
+      if (activeToken) {
         setIsSyncing(true);
         try {
+          // Process any pending offline additions from queue
+          let pendingQueue: Array<{ date: string; entry: DiaryEntry }> = [];
+          try {
+            const rawQueue = localStorage.getItem('macrofit_pending_additions');
+            if (rawQueue) pendingQueue = JSON.parse(rawQueue);
+          } catch {
+            // ignore
+          }
+
+          if (pendingQueue.length > 0) {
+            const remainingQueue: typeof pendingQueue = [];
+            for (const item of pendingQueue) {
+              if (item.date === dateStr) {
+                try {
+                  const postResp = await fetch(`${base}/api/usuario/refeicao`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: activeToken,
+                    },
+                    body: JSON.stringify({
+                      data: item.date,
+                      categoria: item.entry.categoria,
+                      nome: item.entry.nome,
+                      marca: item.entry.marca || 'Manual',
+                      quantidade: item.entry.quantidade,
+                      unidade_desc: item.entry.unidadeDesc || `${item.entry.quantidade}g`,
+                      calorias: item.entry.calorias,
+                      proteinas: item.entry.proteinas,
+                      carboidratos: item.entry.carboidratos,
+                      gorduras: item.entry.gorduras,
+                    }),
+                    signal: AbortSignal.timeout(4000),
+                  });
+                  if (!postResp.ok) {
+                    remainingQueue.push(item);
+                  }
+                } catch {
+                  remainingQueue.push(item);
+                }
+              } else {
+                remainingQueue.push(item);
+              }
+            }
+            if (remainingQueue.length > 0) {
+              localStorage.setItem('macrofit_pending_additions', JSON.stringify(remainingQueue));
+            } else {
+              localStorage.removeItem('macrofit_pending_additions');
+            }
+          }
+
           const resp = await fetch(
             `${base}/api/usuario/dados-completos?data=${encodeURIComponent(dateStr)}`,
             {
-              headers: { Authorization: authToken },
+              headers: { Authorization: activeToken },
+              signal: AbortSignal.timeout(8000),
             }
           );
+
           if (resp.ok) {
             const data = (await resp.json()) as {
               metas?: Partial<MetabolicGoals>;
@@ -315,89 +399,15 @@ export default function App() {
             const cloudAgua = Number(data.agua) || 0;
             const cloudDiario = data.diario || {};
 
-            // TWO-WAY MERGE:
-            // Combine cloud meals and any local meals that were added while offline
-            const mergedDiario: Record<string, DiaryEntry[]> = {};
-            for (const [cat, items] of Object.entries(cloudDiario)) {
-              mergedDiario[cat] = [...items];
-            }
+            // CLOUD IS AUTHORITATIVE:
+            // Items deleted on mobile will be deleted here. No ghost items!
+            setAguaAtual(cloudAgua);
+            setDiario(cloudDiario);
+            localStorage.setItem(`macrofit_agua_${dateStr}`, String(cloudAgua));
+            localStorage.setItem(`macrofit_diario_${dateStr}`, JSON.stringify(cloudDiario));
 
-            // Check if local has items that haven't been pushed to the cloud yet
-            for (const [cat, locItems] of Object.entries(localDiario)) {
-              if (!mergedDiario[cat]) mergedDiario[cat] = [];
-              const cloudCatItems = mergedDiario[cat];
-
-              for (const locItem of locItems) {
-                const exists = cloudCatItems.some(
-                  (ci) =>
-                    ci.id === locItem.id ||
-                    (ci.nome.toLowerCase() === locItem.nome.toLowerCase() &&
-                      Math.abs(ci.calorias - locItem.calorias) < 2 &&
-                      Math.abs(ci.quantidade - locItem.quantidade) < 1)
-                );
-
-                if (!exists) {
-                  // Upload this local meal to cloud now
-                  try {
-                    const postResp = await fetch(`${base}/api/usuario/refeicao`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: authToken,
-                      },
-                      body: JSON.stringify({
-                        data: dateStr,
-                        categoria: locItem.categoria || cat,
-                        nome: locItem.nome,
-                        marca: locItem.marca || 'Manual',
-                        quantidade: locItem.quantidade,
-                        unidade_desc: locItem.unidadeDesc || `${locItem.quantidade}g`,
-                        calorias: locItem.calorias,
-                        proteinas: locItem.proteinas,
-                        carboidratos: locItem.carboidratos,
-                        gorduras: locItem.gorduras,
-                      }),
-                    });
-                    if (postResp.ok) {
-                      const postData = (await postResp.json()) as { id?: number };
-                      cloudCatItems.push({
-                        ...locItem,
-                        id: postData.id || locItem.id,
-                      });
-                    } else {
-                      cloudCatItems.push(locItem);
-                    }
-                  } catch {
-                    cloudCatItems.push(locItem);
-                  }
-                }
-              }
-            }
-
-            // Water sync: choose highest recorded, sync to cloud if local was higher
-            let finalAgua = Math.max(localAgua, cloudAgua);
-            if (localAgua > cloudAgua) {
-              try {
-                await fetch(`${base}/api/usuario/agua`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: authToken,
-                  },
-                  body: JSON.stringify({ data: dateStr, quantidade: localAgua }),
-                });
-              } catch {
-                // ignore
-              }
-            }
-
-            setAguaAtual(finalAgua);
-            setDiario(mergedDiario);
-            localStorage.setItem(`macrofit_agua_${dateStr}`, String(finalAgua));
-            localStorage.setItem(`macrofit_diario_${dateStr}`, JSON.stringify(mergedDiario));
-
-            // Ensure all meal categories exist in the UI list
-            const allCats = Object.keys(mergedDiario);
+            // Ensure meal categories returned from cloud exist in the UI list
+            const allCats = Object.keys(cloudDiario);
             if (allCats.length > 0) {
               setCategories((prev) => {
                 const missing = allCats.filter((c) => !prev.includes(c));
@@ -410,11 +420,14 @@ export default function App() {
 
             setLastSyncStatus('synced');
             setLastSyncTime(
-              new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+              new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
             );
-            setIsSyncing(false);
             return;
           } else if (resp.status === 401 || resp.status === 403) {
+            // Session expired or renewed in another device
+            setLastSyncStatus('expired');
+            return;
+          } else {
             setLastSyncStatus('error');
           }
         } catch {
@@ -501,43 +514,67 @@ export default function App() {
     [apiBaseUrl, authToken, currentUser]
   );
 
-  // Preload historical 7-day data from cloud in background so the WeeklyProgressChart is accurate
+  // Preload historical 7-day data from cloud in background with parallel fetch
   const loadWeeklyFromCloud = useCallback(
     async (token?: string | null, baseUrl?: string) => {
       const activeToken = token || authToken;
-      const base = (baseUrl || apiBaseUrl).replace(/\/+$/, '');
+      const base = (baseUrl || apiBaseUrl || PRODUCTION_API_URL).replace(/\/+$/, '');
       if (!activeToken) return;
 
       const recentSeven = getUltimos7DiasISO(getTodayISO());
-      for (const d of recentSeven) {
-        if (d === currentDate) continue;
-        try {
-          const resp = await fetch(
-            `${base}/api/usuario/dados-completos?data=${encodeURIComponent(d)}`,
-            { headers: { Authorization: activeToken } }
-          );
-          if (resp.ok) {
-            const data = (await resp.json()) as { diario?: Record<string, DiaryEntry[]> };
-            if (data.diario && Object.keys(data.diario).length > 0) {
-              localStorage.setItem(`macrofit_diario_${d}`, JSON.stringify(data.diario));
+      const datesToFetch = recentSeven.filter((d) => d !== currentDate);
+
+      await Promise.allSettled(
+        datesToFetch.map(async (d) => {
+          try {
+            const resp = await fetch(
+              `${base}/api/usuario/dados-completos?data=${encodeURIComponent(d)}`,
+              {
+                headers: { Authorization: activeToken },
+                signal: AbortSignal.timeout(4000),
+              }
+            );
+            if (resp.ok) {
+              const data = (await resp.json()) as { diario?: Record<string, DiaryEntry[]> };
+              if (data.diario && Object.keys(data.diario).length > 0) {
+                localStorage.setItem(`macrofit_diario_${d}`, JSON.stringify(data.diario));
+              }
             }
+          } catch {
+            // ignore individual fetch errors
           }
-        } catch {
-          // ignore
-        }
-      }
+        })
+      );
     },
     [apiBaseUrl, authToken, currentDate]
   );
 
-  // Manual sync trigger
+  // Manual sync trigger with reentrancy protection and guarantee to never freeze
   const triggerManualSync = useCallback(async () => {
-    await testBackendConnection();
-    await loadDayData(currentDate);
-    if (authToken) {
-      await loadWeeklyFromCloud(authToken, apiBaseUrl);
+    if (isSyncing) return;
+    setIsSyncing(true);
+
+    // Guaranteed safety release so the button NEVER permanently freezes
+    const safetyTimer = setTimeout(() => {
+      setIsSyncing(false);
+    }, 9000);
+
+    try {
+      // Direct authoritative fetch for current date
+      await loadDayData(currentDate);
+
+      // Preload week in background without blocking current sync UI
+      if (authToken) {
+        loadWeeklyFromCloud(authToken, apiBaseUrl);
+      }
+    } catch (err) {
+      console.warn('Manual sync error:', err);
+      setLastSyncStatus('error');
+    } finally {
+      clearTimeout(safetyTimer);
+      setIsSyncing(false);
     }
-  }, [testBackendConnection, loadDayData, loadWeeklyFromCloud, currentDate, authToken, apiBaseUrl]);
+  }, [isSyncing, loadDayData, loadWeeklyFromCloud, currentDate, authToken, apiBaseUrl]);
 
   useEffect(() => {
     loadDayData(currentDate);
@@ -624,9 +661,24 @@ export default function App() {
               return updated;
             });
           }
+          setLastSyncStatus('synced');
+          setLastSyncTime(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+        } else if (resp.status === 401 || resp.status === 403) {
+          setLastSyncStatus('expired');
+        } else {
+          setLastSyncStatus('pending');
         }
       } catch {
-        // Saved locally
+        // Saved locally and queued for offline sync
+        try {
+          const raw = localStorage.getItem('macrofit_pending_additions');
+          const queue = raw ? JSON.parse(raw) : [];
+          queue.push({ date: currentDate, entry: newEntry });
+          localStorage.setItem('macrofit_pending_additions', JSON.stringify(queue));
+        } catch {
+          // ignore
+        }
+        setLastSyncStatus('pending');
       }
     }
   };
@@ -948,29 +1000,43 @@ export default function App() {
 
                 {/* Cloud Sync Status & Manual Trigger */}
                 {currentUser && authToken ? (
-                  <button
-                    type="button"
-                    onClick={triggerManualSync}
-                    disabled={isSyncing}
-                    title="Clique para sincronizar com o computador e nuvem agora"
-                    className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/40 text-slate-200 transition-colors flex items-center gap-2 cursor-pointer text-xs shrink-0"
-                  >
-                    {isSyncing ? (
-                      <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin shrink-0" />
-                    ) : lastSyncStatus === 'offline' ? (
-                      <CloudOff className="w-4 h-4 text-amber-400 shrink-0" />
-                    ) : (
-                      <Cloud className="w-4 h-4 text-emerald-400 shrink-0" />
-                    )}
-                    <span className="font-semibold text-emerald-400 hidden sm:inline">
-                      {isSyncing ? 'Sincronizando...' : `@${currentUser}`}
-                    </span>
-                    {lastSyncTime && (
-                      <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
-                        ({lastSyncTime})
+                  lastSyncStatus === 'expired' ? (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('conta')}
+                      title="Sua sessão expirou ou foi conectada em outro aparelho. Clique aqui para reconectar."
+                      className="min-h-[44px] px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-300 transition-colors flex items-center gap-2 cursor-pointer text-xs shrink-0 animate-pulse"
+                    >
+                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span className="font-bold text-amber-300">
+                        Sessão Expirada · Reconectar
                       </span>
-                    )}
-                  </button>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={triggerManualSync}
+                      disabled={isSyncing}
+                      title="Clique para sincronizar com o computador e nuvem agora"
+                      className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/40 text-slate-200 transition-colors flex items-center gap-2 cursor-pointer text-xs shrink-0"
+                    >
+                      {isSyncing ? (
+                        <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin shrink-0" />
+                      ) : lastSyncStatus === 'offline' ? (
+                        <CloudOff className="w-4 h-4 text-amber-400 shrink-0" />
+                      ) : (
+                        <Cloud className="w-4 h-4 text-emerald-400 shrink-0" />
+                      )}
+                      <span className="font-semibold text-emerald-400 hidden sm:inline">
+                        {isSyncing ? 'Sincronizando...' : `@${currentUser}`}
+                      </span>
+                      {lastSyncTime && (
+                        <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
+                          ({lastSyncTime})
+                        </span>
+                      )}
+                    </button>
+                  )
                 ) : (
                   <button
                     type="button"
@@ -1302,20 +1368,31 @@ export default function App() {
             apiBaseUrl={apiBaseUrl}
             serverStatus={serverStatus}
             isSyncing={isSyncing}
+            sessionExpired={lastSyncStatus === 'expired'}
             onSyncNow={triggerManualSync}
             onLoginSuccess={async (user, token) => {
+              // Clear temporary unauthenticated seeds so only real cloud data is displayed
+              localStorage.removeItem('macrofit_seeded_v1');
+              localStorage.removeItem('macrofit_seeded_weekly_v1');
               setCurrentUser(user);
               setAuthToken(token);
               localStorage.setItem('macrofit_usuario', user);
               localStorage.setItem('macrofit_token', token);
-              await loadDayData(currentDate);
+              // Authoritatively load the day's meals passing the fresh token
+              await loadDayData(currentDate, token);
               loadWeeklyFromCloud(token, apiBaseUrl);
+              setActiveTab('diario');
             }}
             onLogout={() => {
               setCurrentUser(null);
               setAuthToken(null);
               localStorage.removeItem('macrofit_usuario');
               localStorage.removeItem('macrofit_token');
+              localStorage.removeItem(`macrofit_diario_${currentDate}`);
+              setDiario({});
+              setAguaAtual(0);
+              setLastSyncStatus('synced');
+              setLastSyncTime(null);
             }}
             onUpdateApiBaseUrl={(url) => {
               setApiBaseUrl(url);

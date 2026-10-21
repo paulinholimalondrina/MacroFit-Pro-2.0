@@ -7,6 +7,7 @@ interface AccountCloudViewProps {
   apiBaseUrl: string;
   serverStatus: { online: boolean; database: string; message: string };
   isSyncing?: boolean;
+  sessionExpired?: boolean;
   onSyncNow?: () => void;
   onLoginSuccess: (username: string, token: string) => void;
   onLogout: () => void;
@@ -21,6 +22,7 @@ export const AccountCloudView: React.FC<AccountCloudViewProps> = ({
   apiBaseUrl,
   serverStatus,
   isSyncing = false,
+  sessionExpired = false,
   onSyncNow,
   onLoginSuccess,
   onLogout,
@@ -29,7 +31,7 @@ export const AccountCloudView: React.FC<AccountCloudViewProps> = ({
   onOpenInstallModal,
 }) => {
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'reset'>('login');
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState(currentUser || '');
   const [password, setPassword] = useState('');
   const [masterKey, setMasterKey] = useState('');
   const [authMessage, setAuthMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
@@ -244,7 +246,7 @@ export const AccountCloudView: React.FC<AccountCloudViewProps> = ({
           </div>
         </div>
 
-        {currentUser && authToken ? (
+        {currentUser && authToken && !sessionExpired ? (
           <div className="p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -284,6 +286,18 @@ export const AccountCloudView: React.FC<AccountCloudViewProps> = ({
           </div>
         ) : (
           <div className="space-y-4">
+            {sessionExpired && (
+              <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs flex items-center gap-2.5">
+                <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+                <div className="leading-tight">
+                  <span className="font-bold block text-white">Sessão Expirada ou Conectada em Outro Aparelho</span>
+                  <span className="text-[11px] text-amber-300/90">
+                    Insira sua senha abaixo para reconectar no computador e sincronizar com o celular.
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Mode Switcher */}
             <div className="flex gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
               <button
